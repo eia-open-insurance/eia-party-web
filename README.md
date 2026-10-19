@@ -1,7 +1,7 @@
 # eia-party-web
 
-- GitHub organization: `eia-platform`
-- Repository URL: https://github.com/eia-platform/eia-party-web
+- GitHub organization: `eia-open-insurance`
+- Repository URL: https://github.com/eia-open-insurance/eia-party-web
 - Type: Federated front-end
 - Deployable: Yes
 - Owner: Party
@@ -34,3 +34,6 @@ Party federated remote: screens, widgets, record tabs, and transaction compositi
 
 No business logic; all actions go through the domain service.
 
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
