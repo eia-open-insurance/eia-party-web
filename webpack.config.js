@@ -38,6 +38,7 @@ module.exports = {
   ],
   devServer: {
     port: 3001,
+    allowedHosts: 'all',
     historyApiFallback: true,
     hot: true,
     headers: { 'Access-Control-Allow-Origin': '*' },
@@ -50,3 +51,5 @@ module.exports = {
     ]
   }
 };
+
+

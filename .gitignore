@@ -14,6 +14,7 @@ Thumbs.db
 *.key
 
 # Build output
+.gradle/
 target/
 build/
 dist/
@@ -30,3 +31,5 @@ blob-report/
 # Temporary
 tmp/
 .tmp/
+
+
