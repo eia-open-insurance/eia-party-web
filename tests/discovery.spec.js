@@ -68,6 +68,13 @@ async function mockPolicyLookup(page, items = []) {
   });
 }
 
+/** Keeps the event-derived activity lookup independent in every spec. */
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/events/aggregate/**', async (route) => {
+    await json(route, 200, { aggregateId: '', limit: 50, items: [] });
+  });
+});
+
 test('selects ?record=, re-applies it on popstate, and opens the register dialog from ?new=1', async ({ page }) => {
   const first = party();
   const second = party({

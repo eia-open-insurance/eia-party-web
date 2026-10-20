@@ -28,6 +28,15 @@ product, and status, and opens `/policy?record=<id>`. The lookup is independent
 of the party detail read: an empty result shows an inline empty state and a
 failure shows an inline unavailable message, so the party record stays usable.
 
+On selection, the Activity tab reads the party's aggregate event stream with
+`GET /api/v1/events/aggregate/<partyId>?limit=50` and `X-EIA-Tenant`. The card
+renders newest-first events with timestamp, a readable event type
+(`party.party.created` becomes "Party created"), delivery status, aggregate
+version, and payload facts (party type, status, name). Events are append-only
+facts derived from the platform event stream; the party record remains the
+source of truth. Loading, empty, and failure states stay inside the card and
+are refreshed without changing the selected party.
+
 ## Responsibilities
 
 - Keep this repository focused on one deployable component or one platform concern.

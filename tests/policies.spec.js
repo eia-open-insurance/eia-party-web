@@ -81,6 +81,13 @@ async function mockClaims(page) {
   });
 }
 
+/** Keeps the event-derived activity lookup independent in every spec. */
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/events/aggregate/**', async (route) => {
+    await json(route, 200, { aggregateId: '', limit: 50, items: [] });
+  });
+});
+
 test('looks up policies on party selection with tenant and DIRECT book and links each row', async ({ page }) => {
   const first = party();
   const second = party({

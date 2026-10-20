@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './ui.css';
+import ActivityTimeline from './ActivityTimeline.jsx';
+import { activityEndpoint, eventItems, sortActivityEvents } from './events.js';
 import { navigate, recordHref } from './navigation.js';
 
 const TENANT = '11111111-1111-7111-8111-111111111111';
@@ -218,10 +220,12 @@ export default function App() {
   const [related, setRelated] = useState({ claims: [], loading: false, error: '' });
   const [policies, setPolicies] = useState({ items: [], loading: false, error: '' });
   const [documents, setDocuments] = useState({ items: [], loading: false, error: '' });
+  const [activity, setActivity] = useState({ items: [], loading: false, error: '' });
   const detailRequest = useRef(0);
   const relatedRequest = useRef(0);
   const policyRequest = useRef(0);
   const documentRequest = useRef(0);
+  const activityRequest = useRef(0);
   const partiesRef = useRef([]);
   const applyingUrlRef = useRef(false);
   const registerOpenRef = useRef(false);
@@ -322,6 +326,38 @@ export default function App() {
     loadRelated(partyId);
     loadPolicies(partyId);
     loadDocuments(partyId);
+    loadActivity(partyId);
+  }
+
+  /**
+   * The activity timeline is derived from the platform event stream, not from
+   * the party aggregate. It loads as soon as a party is selected but stays
+   * card-local: an unavailable event service never blocks the party record.
+   */
+  async function loadActivity(partyId) {
+    const requestId = activityRequest.current + 1;
+    activityRequest.current = requestId;
+    if (!partyId) {
+      setActivity({ items: [], loading: false, error: '' });
+      return;
+    }
+    setActivity({ items: [], loading: true, error: '' });
+    try {
+      const body = await api(activityEndpoint(partyId));
+      if (requestId !== activityRequest.current) return;
+      setActivity({
+        items: sortActivityEvents(eventItems(body)),
+        loading: false,
+        error: ''
+      });
+    } catch {
+      if (requestId !== activityRequest.current) return;
+      setActivity({
+        items: [],
+        loading: false,
+        error: 'Activity timeline is temporarily unavailable.'
+      });
+    }
   }
 
   /**
@@ -357,9 +393,11 @@ export default function App() {
     relatedRequest.current += 1;
     policyRequest.current += 1;
     documentRequest.current += 1;
+    activityRequest.current += 1;
     setRelated({ claims: [], loading: false, error: '' });
     setPolicies({ items: [], loading: false, error: '' });
     setDocuments({ items: [], loading: false, error: '' });
+    setActivity({ items: [], loading: false, error: '' });
   }
 
   /**
@@ -463,6 +501,7 @@ export default function App() {
       relatedRequest.current += 1;
       policyRequest.current += 1;
       documentRequest.current += 1;
+      activityRequest.current += 1;
     };
   }, []);
 
@@ -685,30 +724,14 @@ export default function App() {
         <section id="panel-activity" role="tabpanel" aria-labelledby="tab-activity">
           <div className="eia-section-title" style={{ marginTop: 0 }}>
             <h2>Activity</h2>
-            <span className="eia-badge warn">Not available</span>
+            <span className="eia-muted">Newest first · derived from party events</span>
           </div>
-          <p className="eia-muted" style={{ marginTop: 0 }}>
-            No activity or audit-history endpoint is exposed by the Party API in this release. The
-            record&apos;s created and updated timestamps are shown on Overview.
-          </p>
-          <div className="eia-table-wrap">
-            <table className="eia-table">
-              <thead>
-                <tr>
-                  <th>Timestamp</th>
-                  <th>Event</th>
-                  <th>Actor</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td className="eia-muted" colSpan={3}>
-                    No activity endpoint is available in this release.
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <ActivityTimeline
+            items={activity.items}
+            loading={activity.loading}
+            error={activity.error}
+            onRefresh={() => loadActivity(party.id)}
+          />
         </section>
       );
     }
@@ -892,9 +915,10 @@ export default function App() {
         <section className="eia-card" aria-label="API coverage" style={{ marginTop: 14 }}>
           <h3>Available operations</h3>
           <p style={{ margin: '8px 0 0' }}>
-            This release supports listing and reading party records and registering new parties. Status
-            transitions, identifiers, addresses, and activity history are not exposed by the Party API yet,
-            so those sections are marked unavailable instead of showing derived or placeholder data.
+            This release supports listing and reading party records, registering new parties, and
+            reading the event-derived activity timeline. Status transitions, identifiers, and
+            addresses are not exposed by the Party API yet, so those sections are marked unavailable
+            instead of showing derived or placeholder data.
           </p>
         </section>
       </section>

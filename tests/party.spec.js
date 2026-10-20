@@ -46,6 +46,13 @@ async function mockPolicyLookup(page, items = []) {
   });
 }
 
+/** Keeps the event-derived activity lookup independent in every spec. */
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/events/aggregate/**', async (route) => {
+    await json(route, 200, { aggregateId: '', limit: 50, items: [] });
+  });
+});
+
 test('renders the shared Party operational record layout and read-only sections', async ({ page }) => {
   const existing = party();
   const requests = [];
@@ -113,7 +120,10 @@ test('renders the shared Party operational record layout and read-only sections'
   await expect(page.getByText('No address endpoint is available in this release.')).toBeVisible();
 
   await page.getByRole('tab', { name: 'Activity' }).click();
-  await expect(page.getByText('No activity endpoint is available in this release.')).toBeVisible();
+  await expect(page.getByTestId('party-activity')).toBeVisible();
+  await expect(page.getByTestId('activity-empty')).toContainText(
+    'No activity has been recorded for this party yet.'
+  );
 
   expect(requests.length).toBeGreaterThan(1);
   expect(requests.every((headers) => headers['x-eia-tenant'] === TENANT)).toBeTruthy();

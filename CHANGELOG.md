@@ -16,3 +16,10 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   and `X-EIA-Book: DIRECT`, then links each row to `/policy?record=<id>` with
   policy number, product, and status. Empty and failed lookups render inline
   without blocking the party record.
+- Event-derived Activity timeline. Selecting a party requests
+  `GET /api/v1/events/aggregate/<partyId>?limit=50` with `X-EIA-Tenant` and
+  renders newest-first events with a readable event type, delivery status,
+  aggregate version, and payload facts (party type, status, name). Loading,
+  empty, and failure states are card-local, and the timeline refetches for
+  each selected party or on demand. Events are append-only; the party record
+  remains the source of truth.
