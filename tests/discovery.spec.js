@@ -7,6 +7,7 @@ const THIRD_ID = '0192f3a4-8f1c-7c3a-9b2e-6a1d4f8e2b92';
 const CLAIM_ID = '0192f3a4-2b7e-7d1f-a9c4-3e8b5f0c9d21';
 const PARTY_SEARCH = '**/api/v1/parties**';
 const CLAIMS_SEARCH = '**/api/v1/claims/search**';
+const POLICY_LOOKUP = '**/api/v1/policies**';
 
 function party(overrides = {}) {
   return {
@@ -61,6 +62,12 @@ async function mockClaimsSearch(page, items = []) {
   });
 }
 
+async function mockPolicyLookup(page, items = []) {
+  await page.route(POLICY_LOOKUP, async (route) => {
+    await json(route, 200, { items, page: 0, size: 5, total: items.length });
+  });
+}
+
 test('selects ?record=, re-applies it on popstate, and opens the register dialog from ?new=1', async ({ page }) => {
   const first = party();
   const second = party({
@@ -75,6 +82,7 @@ test('selects ?record=, re-applies it on popstate, and opens the register dialog
 
   await routeParties(page, [first, second]);
   await mockClaimsSearch(page);
+  await mockPolicyLookup(page);
 
   await page.goto(`/?record=${SECOND_ID}`);
   await expect(page.getByRole('heading', { name: 'PTY-000000002' })).toBeVisible();
@@ -113,6 +121,7 @@ test('loads a deep-linked party that is not on the loaded queue', async ({ page 
     await route.fulfill({ status: 404, body: 'unexpected route' });
   });
   await mockClaimsSearch(page);
+  await mockPolicyLookup(page);
 
   await page.goto(`/party?record=${SECOND_ID}`);
   await expect(page.getByRole('heading', { name: 'PTY-000000002' })).toBeVisible();
@@ -140,6 +149,7 @@ test('filters the party queue by number, name, type, and status with a clear con
 
   await routeParties(page, [first, second, third]);
   await mockClaimsSearch(page);
+  await mockPolicyLookup(page);
 
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Open record PTY-000000001' })).toBeVisible();
@@ -181,6 +191,7 @@ test('renders shared-party context and direct-book related claim links', async (
   let claimsRequest = null;
 
   await routeParties(page, [existing]);
+  await mockPolicyLookup(page);
   await page.route(CLAIMS_SEARCH, async (route) => {
     claimsRequest = { url: new URL(route.request().url()), headers: route.request().headers() };
     await json(route, 200, {

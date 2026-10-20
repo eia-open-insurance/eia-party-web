@@ -13,6 +13,21 @@
 
 Party federated remote: screens, widgets, record tabs, and transaction composition. Party identity, roles, merge, KYC/AML, sanctions, and consent.
 
+## Implemented slice
+
+The remote renders the shared Party operational record: a filterable register,
+deep links via `?record=<id>` and `?new=1`, party registration, Overview /
+Identifiers / Names & Addresses / Activity tabs, and cross-links to direct-book
+records.
+
+On selection, the Overview tab reads the first five direct policies for the
+party with
+`GET /api/v1/policies?insuredPartyId=<id>&page=0&size=5` (`X-EIA-Tenant` and
+`X-EIA-Book: DIRECT`). The "Policies for this party" card lists policy number,
+product, and status, and opens `/policy?record=<id>`. The lookup is independent
+of the party detail read: an empty result shows an inline empty state and a
+failure shows an inline unavailable message, so the party record stays usable.
+
 ## Responsibilities
 
 - Keep this repository focused on one deployable component or one platform concern.

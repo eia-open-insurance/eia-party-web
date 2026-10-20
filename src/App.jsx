@@ -4,6 +4,7 @@ import { navigate, recordHref } from './navigation.js';
 
 const TENANT = '11111111-1111-7111-8111-111111111111';
 const RELATED_LIMIT = 5;
+const POLICY_LIMIT = 5;
 const QUEUE_FILTER_PLACEHOLDER = 'Filter parties by number, name, type, or status…';
 
 const TABS = [
@@ -57,6 +58,13 @@ function confidentialityTone(value) {
   if (['CONFIDENTIAL', 'RESTRICTED'].includes(value)) return 'red';
   if (value === 'INTERNAL') return 'blue';
   return 'amber';
+}
+
+function policyStatusTone(status) {
+  if (['IN_FORCE', 'ISSUED', 'REINSTATED'].includes(status)) return 'green';
+  if (['CANCELLED', 'EXPIRED', 'NON_RENEWED', 'VOID'].includes(status)) return 'red';
+  if (['DRAFT', 'QUOTED'].includes(status)) return 'amber';
+  return 'blue';
 }
 
 function formatTimestamp(value) {
@@ -199,8 +207,10 @@ export default function App() {
   const [notice, setNotice] = useState('');
   const [queueFilter, setQueueFilter] = useState('');
   const [related, setRelated] = useState({ claims: [], loading: false, error: '' });
+  const [policies, setPolicies] = useState({ items: [], loading: false, error: '' });
   const detailRequest = useRef(0);
   const relatedRequest = useRef(0);
+  const policyRequest = useRef(0);
   const partiesRef = useRef([]);
   const applyingUrlRef = useRef(false);
   const registerOpenRef = useRef(false);
@@ -266,9 +276,47 @@ export default function App() {
     }
   }
 
+  /**
+   * Policy lookups are a read-only cross-link: a failure is kept in its own
+   * state so the party record and the claims lookup stay usable.
+   */
+  async function loadPolicies(partyId) {
+    const requestId = policyRequest.current + 1;
+    policyRequest.current = requestId;
+    if (!partyId) {
+      setPolicies({ items: [], loading: false, error: '' });
+      return;
+    }
+    setPolicies({ items: [], loading: true, error: '' });
+    try {
+      const body = await api(
+        `/api/v1/policies?insuredPartyId=${encodeURIComponent(partyId)}`
+          + `&page=0&size=${POLICY_LIMIT}`,
+        { book: 'DIRECT' }
+      );
+      if (requestId !== policyRequest.current) return;
+      const items = Array.isArray(body?.items) ? body.items : [];
+      setPolicies({ items, loading: false, error: '' });
+    } catch (e) {
+      if (requestId !== policyRequest.current) return;
+      setPolicies({
+        items: [],
+        loading: false,
+        error: e.message || 'Policy links are temporarily unavailable.'
+      });
+    }
+  }
+
+  function loadLinks(partyId) {
+    loadRelated(partyId);
+    loadPolicies(partyId);
+  }
+
   function clearRelated() {
     relatedRequest.current += 1;
+    policyRequest.current += 1;
     setRelated({ claims: [], loading: false, error: '' });
+    setPolicies({ items: [], loading: false, error: '' });
   }
 
   /**
@@ -299,7 +347,7 @@ export default function App() {
       setDetail(null);
       setActiveTab('overview');
       await loadDetail(target.id);
-      loadRelated(target.id);
+      loadLinks(target.id);
       return;
     }
 
@@ -311,7 +359,7 @@ export default function App() {
       setActiveTab('overview');
       setError('');
       await loadDetail(known.id);
-      loadRelated(known.id);
+      loadLinks(known.id);
       return;
     }
 
@@ -330,7 +378,7 @@ export default function App() {
       });
       setActiveTab('overview');
       setError('');
-      loadRelated(recordData.id);
+      loadLinks(recordData.id);
     } catch (e) {
       setSelectedId(null);
       setDetail(null);
@@ -370,6 +418,7 @@ export default function App() {
       window.removeEventListener('popstate', onPopState);
       detailRequest.current += 1;
       relatedRequest.current += 1;
+      policyRequest.current += 1;
     };
   }, []);
 
@@ -396,7 +445,7 @@ export default function App() {
     setError('');
     setNotice('');
     loadDetail(partyId);
-    loadRelated(partyId);
+    loadLinks(partyId);
   }
 
   async function refreshWorkspace() {
@@ -419,7 +468,7 @@ export default function App() {
         setDetail(null);
       }
       await loadDetail(target.id, { silent: true });
-      loadRelated(target.id);
+      loadLinks(target.id);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -468,7 +517,7 @@ export default function App() {
           return next;
         });
         writeUrl({ record: created.id });
-        loadRelated(created.id);
+        loadLinks(created.id);
       }
       try {
         const rows = await fetchParties();
@@ -669,6 +718,62 @@ export default function App() {
             </dl>
           </section>
         </div>
+
+        <section
+          className="eia-card"
+          aria-label="Policies for this party"
+          data-testid="party-policies"
+          style={{ marginTop: 14 }}
+        >
+          <div className="eia-section-title" style={{ marginTop: 0 }}>
+            <h3>Policies for this party</h3>
+            <span className="eia-badge" title="Direct-book policies">DIRECT</span>
+          </div>
+          {policies.loading ? (
+            <p className="eia-muted" style={{ margin: '8px 0 0' }}>Loading policies…</p>
+          ) : policies.error ? (
+            <p className="eia-muted" style={{ margin: '8px 0 0' }}>
+              Policy links are unavailable right now.
+            </p>
+          ) : policies.items.length === 0 ? (
+            <p className="eia-muted" style={{ margin: '8px 0 0' }}>
+              No direct policies reference this party.
+            </p>
+          ) : (
+            <div className="eia-table-wrap">
+              <table className="eia-table">
+                <thead>
+                  <tr>
+                    <th>Policy number</th>
+                    <th>Product</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {policies.items.map((item) => (
+                    <tr key={item.id}>
+                      <td>
+                        <CrossLink
+                          className="eia-mono"
+                          href={`/policy?record=${encodeURIComponent(item.id)}`}
+                          title={`Open policy ${item.policyNumber || item.id}`}
+                        >
+                          {item.policyNumber || 'Policy'}
+                        </CrossLink>
+                      </td>
+                      <td>{item.productCode || '—'}</td>
+                      <td>
+                        <span className={`eia-pill ${policyStatusTone(item.status)}`}>
+                          {item.status || '—'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
 
         <section className="eia-card" aria-label="API coverage" style={{ marginTop: 14 }}>
           <h3>Available operations</h3>
