@@ -67,6 +67,15 @@ function policyStatusTone(status) {
   return 'blue';
 }
 
+function documentStatusTone(status) {
+  if (['ACTIVE', 'CLASSIFIED'].includes(status)) return 'green';
+  if (['REJECTED', 'FAILED', 'DISPOSED'].includes(status)) return 'red';
+  if (['PENDING_UPLOAD', 'RECEIVED', 'SCANNING', 'PROCESSING', 'ON_HOLD'].includes(status)) {
+    return 'amber';
+  }
+  return 'blue';
+}
+
 function formatTimestamp(value) {
   if (!value) return '—';
   const date = new Date(value);
@@ -208,9 +217,11 @@ export default function App() {
   const [queueFilter, setQueueFilter] = useState('');
   const [related, setRelated] = useState({ claims: [], loading: false, error: '' });
   const [policies, setPolicies] = useState({ items: [], loading: false, error: '' });
+  const [documents, setDocuments] = useState({ items: [], loading: false, error: '' });
   const detailRequest = useRef(0);
   const relatedRequest = useRef(0);
   const policyRequest = useRef(0);
+  const documentRequest = useRef(0);
   const partiesRef = useRef([]);
   const applyingUrlRef = useRef(false);
   const registerOpenRef = useRef(false);
@@ -310,13 +321,45 @@ export default function App() {
   function loadLinks(partyId) {
     loadRelated(partyId);
     loadPolicies(partyId);
+    loadDocuments(partyId);
+  }
+
+  /**
+   * Linked documents are evidence, not party master data. The lookup keeps its
+   * own state so a failure never blocks the party record or the other cards.
+   */
+  async function loadDocuments(partyId) {
+    const requestId = documentRequest.current + 1;
+    documentRequest.current = requestId;
+    if (!partyId) {
+      setDocuments({ items: [], loading: false, error: '' });
+      return;
+    }
+    setDocuments({ items: [], loading: true, error: '' });
+    try {
+      const body = await api(
+        `/api/v1/documents?linkedType=PARTY&linkedId=${encodeURIComponent(partyId)}`
+      );
+      if (requestId !== documentRequest.current) return;
+      const items = Array.isArray(body) ? body : (Array.isArray(body?.items) ? body.items : []);
+      setDocuments({ items, loading: false, error: '' });
+    } catch {
+      if (requestId !== documentRequest.current) return;
+      setDocuments({
+        items: [],
+        loading: false,
+        error: 'Document links are temporarily unavailable.'
+      });
+    }
   }
 
   function clearRelated() {
     relatedRequest.current += 1;
     policyRequest.current += 1;
+    documentRequest.current += 1;
     setRelated({ claims: [], loading: false, error: '' });
     setPolicies({ items: [], loading: false, error: '' });
+    setDocuments({ items: [], loading: false, error: '' });
   }
 
   /**
@@ -419,6 +462,7 @@ export default function App() {
       detailRequest.current += 1;
       relatedRequest.current += 1;
       policyRequest.current += 1;
+      documentRequest.current += 1;
     };
   }, []);
 
@@ -764,6 +808,76 @@ export default function App() {
                       <td>{item.productCode || '—'}</td>
                       <td>
                         <span className={`eia-pill ${policyStatusTone(item.status)}`}>
+                          {item.status || '—'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        <section
+          className="eia-card"
+          aria-label="Documents for this party"
+          data-testid="party-documents"
+          style={{ marginTop: 14 }}
+        >
+          <div className="eia-section-title" style={{ marginTop: 0 }}>
+            <h3>Documents</h3>
+            <span className="eia-badge" data-testid="party-documents-count">
+              {documents.loading
+                ? '…'
+                : `${documents.items.length} ${documents.items.length === 1 ? 'document' : 'documents'}`}
+            </span>
+          </div>
+          <p
+            className="eia-muted"
+            style={{ margin: '4px 0 0' }}
+            data-testid="documents-evidence-note"
+          >
+            Documents are evidence, not business facts. Open a document in the Document workspace to
+            review its content and links.
+          </p>
+          {documents.loading ? (
+            <p className="eia-muted" style={{ margin: '8px 0 0' }}>Loading documents…</p>
+          ) : documents.error ? (
+            <p className="eia-muted" style={{ margin: '8px 0 0' }}>{documents.error}</p>
+          ) : documents.items.length === 0 ? (
+            <p className="eia-muted" style={{ margin: '8px 0 0' }}>
+              No documents are linked to this party.
+            </p>
+          ) : (
+            <div className="eia-table-wrap" style={{ marginTop: 10 }}>
+              <table className="eia-table">
+                <thead>
+                  <tr>
+                    <th>Document number</th>
+                    <th>Title</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {documents.items.map((item, index) => (
+                    <tr key={item.id || item.documentNumber || `document-${index}`}>
+                      <td>
+                        {item.id ? (
+                          <CrossLink
+                            className="eia-mono"
+                            href={`/document?record=${encodeURIComponent(item.id)}`}
+                            title={`Open document ${item.documentNumber || item.id}`}
+                          >
+                            {item.documentNumber || 'Document'}
+                          </CrossLink>
+                        ) : (item.documentNumber || '—')}
+                      </td>
+                      <td>{item.title || '—'}</td>
+                      <td>{item.documentType || item.type || '—'}</td>
+                      <td>
+                        <span className={`eia-pill ${documentStatusTone(item.status)}`}>
                           {item.status || '—'}
                         </span>
                       </td>
