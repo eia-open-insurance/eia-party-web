@@ -1,7 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './ui.css';
+import { navigate, recordHref } from './navigation.js';
 
 const TENANT = '11111111-1111-7111-8111-111111111111';
+const RELATED_LIMIT = 5;
+const QUEUE_FILTER_PLACEHOLDER = 'Filter parties by number, name, type, or status…';
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -84,9 +87,79 @@ async function readJson(response) {
   return response.json().catch(() => null);
 }
 
+function readUrlState() {
+  if (typeof window === 'undefined') return { record: '', create: false };
+  const params = new URLSearchParams(window.location.search);
+  return { record: (params.get('record') || '').trim(), create: params.get('new') === '1' };
+}
+
+/**
+ * The remote is mounted either at the shell route (/party) or directly at the
+ * dev-server root (/). Only treat the URL as party state on those routes, so a
+ * cross-link to /policy or /direct-claims is not read as a party id.
+ */
+function isPartyRoute() {
+  if (typeof window === 'undefined') return false;
+  const path = window.location.pathname.replace(/\/+$/, '');
+  return path === '' || path === '/index.html' || path === '/party' || path.endsWith('/party');
+}
+
+function writeUrl({ record = '', create = false, replace = false } = {}) {
+  if (typeof window === 'undefined' || !isPartyRoute()) return;
+  const params = new URLSearchParams();
+  if (record) params.set('record', record);
+  if (create) params.set('new', '1');
+  const query = params.toString();
+  const target = `${window.location.pathname}${query ? `?${query}` : ''}`;
+  const current = `${window.location.pathname}${window.location.search}`;
+  if (target === current) return;
+  try {
+    if (replace) window.history.replaceState({}, '', target);
+    else window.history.pushState({}, '', target);
+  } catch {
+    // URL state is an enhancement; queue selection still works without it.
+  }
+}
+
+function filterParties(rows, filter) {
+  const term = filter.trim().toLowerCase();
+  if (!term) return rows;
+  return rows.filter((party) => [
+    party.partyNumber,
+    party.displayName,
+    party.legalName,
+    party.partyType,
+    party.status,
+    party.sanctionsStatus
+  ].some((value) => String(value || '').toLowerCase().includes(term)));
+}
+
+function relatedHref(item, basePath) {
+  const href = item?.href;
+  if (typeof href === 'string' && href.startsWith('/')) return href;
+  return recordHref(basePath, item?.id);
+}
+
+function CrossLink({ href, className, title, children }) {
+  return (
+    <a
+      href={href}
+      className={className}
+      title={title}
+      onClick={(event) => {
+        event.preventDefault();
+        navigate(href);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
 async function api(path, options = {}) {
   const headers = { 'X-EIA-Tenant': TENANT };
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+  if (options.book) headers['X-EIA-Book'] = options.book;
   const response = await fetch(path, {
     method: options.method || 'GET',
     headers,
@@ -124,11 +197,29 @@ export default function App() {
   const [registering, setRegistering] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [queueFilter, setQueueFilter] = useState('');
+  const [related, setRelated] = useState({ claims: [], loading: false, error: '' });
   const detailRequest = useRef(0);
+  const relatedRequest = useRef(0);
+  const partiesRef = useRef([]);
+  const applyingUrlRef = useRef(false);
+  const registerOpenRef = useRef(false);
+
+  const normalizedQueueFilter = queueFilter.trim().toLowerCase();
+  const filterActive = normalizedQueueFilter.length > 0;
+  const visibleParties = filterActive ? filterParties(parties, queueFilter) : parties;
 
   const selectedParty = detail && detail.id === selectedId
     ? detail
     : parties.find((party) => party.id === selectedId) || null;
+
+  useEffect(() => {
+    partiesRef.current = parties;
+  }, [parties]);
+
+  useEffect(() => {
+    registerOpenRef.current = registerOpen;
+  }, [registerOpen]);
 
   async function fetchParties() {
     const body = await api('/api/v1/parties');
@@ -149,6 +240,107 @@ export default function App() {
     }
   }
 
+  async function loadRelated(partyId) {
+    const requestId = relatedRequest.current + 1;
+    relatedRequest.current = requestId;
+    if (!partyId) {
+      setRelated({ claims: [], loading: false, error: '' });
+      return;
+    }
+    setRelated({ claims: [], loading: true, error: '' });
+    try {
+      const body = await api(
+        `/api/v1/claims/search?q=${encodeURIComponent(partyId)}&limit=${RELATED_LIMIT}`,
+        { book: 'DIRECT' }
+      );
+      if (requestId !== relatedRequest.current) return;
+      const items = Array.isArray(body) ? body : (Array.isArray(body?.items) ? body.items : []);
+      setRelated({ claims: items, loading: false, error: '' });
+    } catch (e) {
+      if (requestId !== relatedRequest.current) return;
+      setRelated({
+        claims: [],
+        loading: false,
+        error: e.message || 'Related records are temporarily unavailable.'
+      });
+    }
+  }
+
+  function clearRelated() {
+    relatedRequest.current += 1;
+    setRelated({ claims: [], loading: false, error: '' });
+  }
+
+  /**
+   * Applies ?record= and ?new=1. The record is selected immediately when it is
+   * already in the queue; otherwise the detail endpoint is fetched so a
+   * deep-linked party still opens even when it is not in the loaded list.
+   */
+  async function applyUrlState(rows = partiesRef.current, { initial = false } = {}) {
+    if (!isPartyRoute()) return;
+    const { record, create } = readUrlState();
+    if (create) {
+      if (!registerOpenRef.current) setForm(EMPTY_FORM);
+      setRegisterOpen(true);
+    } else if (!initial) {
+      setRegisterOpen(false);
+    }
+
+    if (!record) {
+      if (create) return;
+      if (rows.length === 0) {
+        setSelectedId(null);
+        setDetail(null);
+        clearRelated();
+        return;
+      }
+      const target = rows[0];
+      setSelectedId(target.id);
+      setDetail(null);
+      setActiveTab('overview');
+      await loadDetail(target.id);
+      loadRelated(target.id);
+      return;
+    }
+
+    if (applyingUrlRef.current) return;
+    const known = rows.find((party) => party.id === record || party.partyNumber === record);
+    if (known) {
+      setSelectedId(known.id);
+      setDetail(null);
+      setActiveTab('overview');
+      setError('');
+      await loadDetail(known.id);
+      loadRelated(known.id);
+      return;
+    }
+
+    applyingUrlRef.current = true;
+    try {
+      const recordData = await api(`/api/v1/parties/${encodeURIComponent(record)}`);
+      if (!recordData?.id) return;
+      setSelectedId(recordData.id);
+      setDetail(recordData);
+      setParties((current) => {
+        const next = current.some((party) => party.id === recordData.id)
+          ? current
+          : [recordData, ...current];
+        partiesRef.current = next;
+        return next;
+      });
+      setActiveTab('overview');
+      setError('');
+      loadRelated(recordData.id);
+    } catch (e) {
+      setSelectedId(null);
+      setDetail(null);
+      setError(`Party “${record}” could not be loaded: ${e.message}`);
+      clearRelated();
+    } finally {
+      applyingUrlRef.current = false;
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -156,11 +348,9 @@ export default function App() {
       try {
         const rows = await fetchParties();
         if (cancelled) return;
+        partiesRef.current = rows;
         setParties(rows);
-        if (rows.length > 0) {
-          setSelectedId(rows[0].id);
-          await loadDetail(rows[0].id);
-        }
+        await applyUrlState(rows, { initial: true });
       } catch (e) {
         if (!cancelled) setError(e.message);
       } finally {
@@ -168,10 +358,18 @@ export default function App() {
       }
     }
 
+    const onPopState = () => {
+      applyUrlState(partiesRef.current).catch((e) => setError(e.message));
+    };
+
+    window.addEventListener('popstate', onPopState);
     initialise();
+
     return () => {
       cancelled = true;
+      window.removeEventListener('popstate', onPopState);
       detailRequest.current += 1;
+      relatedRequest.current += 1;
     };
   }, []);
 
@@ -181,13 +379,16 @@ export default function App() {
       if (event.key === 'Escape' && !registering) {
         setRegisterOpen(false);
         setError('');
+        writeUrl({ record: selectedId || '' });
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [registerOpen, registering]);
+  }, [registerOpen, registering, selectedId]);
 
   function selectParty(partyId) {
+    if (!partyId) return;
+    writeUrl({ record: partyId });
     if (partyId === selectedId) return;
     setSelectedId(partyId);
     setDetail(null);
@@ -195,6 +396,7 @@ export default function App() {
     setError('');
     setNotice('');
     loadDetail(partyId);
+    loadRelated(partyId);
   }
 
   async function refreshWorkspace() {
@@ -203,11 +405,13 @@ export default function App() {
     setNotice('');
     try {
       const rows = await fetchParties();
+      partiesRef.current = rows;
       setParties(rows);
       const target = rows.find((party) => party.id === selectedId) || rows[0] || null;
       if (!target) {
         setSelectedId(null);
         setDetail(null);
+        clearRelated();
         return;
       }
       if (target.id !== selectedId) {
@@ -215,6 +419,7 @@ export default function App() {
         setDetail(null);
       }
       await loadDetail(target.id, { silent: true });
+      loadRelated(target.id);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -225,13 +430,16 @@ export default function App() {
   function openRegister() {
     setForm(EMPTY_FORM);
     setError('');
+    setNotice('');
     setRegisterOpen(true);
+    writeUrl({ record: selectedId || '', create: true });
   }
 
   function closeRegister() {
     if (registering) return;
     setRegisterOpen(false);
     setError('');
+    writeUrl({ record: selectedId || '' });
   }
 
   async function submit(event) {
@@ -254,13 +462,20 @@ export default function App() {
       if (created?.id) {
         setSelectedId(created.id);
         setDetail(created);
-        setParties((current) => [created, ...current.filter((party) => party.id !== created.id)]);
+        setParties((current) => {
+          const next = [created, ...current.filter((party) => party.id !== created.id)];
+          partiesRef.current = next;
+          return next;
+        });
+        writeUrl({ record: created.id });
+        loadRelated(created.id);
       }
       try {
         const rows = await fetchParties();
         const merged = created?.id && !rows.some((party) => party.id === created.id)
           ? [created, ...rows]
           : rows;
+        partiesRef.current = merged;
         setParties(merged);
         if (created?.id) {
           setSelectedId(created.id);
@@ -475,7 +690,8 @@ export default function App() {
           <h1>Party</h1>
           <p className="subtitle">
             Shared party master data for the direct and assumed books: identity, classification,
-            sanctions screening, and confidentiality. Book associations remain book-scoped.
+            sanctions screening, and confidentiality. Policies, claims, and contracts keep their own
+            book scope.
           </p>
         </div>
         <div className="eia-actions">
@@ -493,39 +709,72 @@ export default function App() {
       {error && !registerOpen && <p role="alert" style={{ margin: '0 0 12px' }}>{error}</p>}
 
       <div className="eia-record-layout">
-        <aside className="eia-record-list" aria-label="Party register">
-          <div className="eia-record-list-head">
-            <strong>Party register</strong>
-            <span className="eia-muted">{loading ? '…' : parties.length}</span>
-          </div>
-          {parties.map((party) => {
-            const isSelected = party.id === selectedId;
-            return (
-              <button
-                key={party.id}
-                type="button"
-                className={isSelected ? 'selected' : ''}
-                aria-pressed={isSelected}
-                aria-label={`Open record ${party.partyNumber}`}
-                onClick={() => selectParty(party.id)}
-              >
-                <span className="record-primary">{party.partyNumber}</span>
-                <span className="record-secondary">{party.displayName}</span>
-                <span
-                  className="record-secondary"
-                  style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
+          <div className="eia-queue-search" role="search" aria-label="Filter the party queue">
+            <div className="eia-search-box">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+                <path d="m20 20-3.4-3.4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              <input
+                type="search"
+                value={queueFilter}
+                onChange={(event) => setQueueFilter(event.target.value)}
+                placeholder={QUEUE_FILTER_PLACEHOLDER}
+                aria-label="Filter parties"
+                autoComplete="off"
+              />
+              {filterActive && (
+                <button
+                  type="button"
+                  className="eia-queue-clear"
+                  onClick={() => setQueueFilter('')}
                 >
-                  <span className="eia-badge">{party.partyType || '—'}</span>
-                  <span className={`eia-pill ${statusTone(party.status)}`}>{party.status || '—'}</span>
-                </span>
-              </button>
-            );
-          })}
-          {!loading && parties.length === 0 && (
-            <div className="empty">No parties yet. Register the first shared party.</div>
-          )}
-          {loading && parties.length === 0 && <div className="empty">Loading parties…</div>}
-        </aside>
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          <aside className="eia-record-list" aria-label="Party register">
+            <div className="eia-record-list-head">
+              <strong>Party register</strong>
+              <span className="eia-muted">
+                {loading ? '…' : filterActive ? `${visibleParties.length} of ${parties.length}` : parties.length}
+              </span>
+            </div>
+            {visibleParties.map((party) => {
+              const isSelected = party.id === selectedId;
+              return (
+                <button
+                  key={party.id}
+                  type="button"
+                  className={isSelected ? 'selected' : ''}
+                  aria-pressed={isSelected}
+                  aria-label={`Open record ${party.partyNumber}`}
+                  onClick={() => selectParty(party.id)}
+                >
+                  <span className="record-primary">{party.partyNumber}</span>
+                  <span className="record-secondary">{party.displayName}</span>
+                  <span
+                    className="record-secondary"
+                    style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}
+                  >
+                    <span className="eia-badge">{party.partyType || '—'}</span>
+                    <span className={`eia-pill ${statusTone(party.status)}`}>{party.status || '—'}</span>
+                  </span>
+                </button>
+              );
+            })}
+            {!loading && parties.length === 0 && (
+              <div className="empty">No parties yet. Register the first shared party.</div>
+            )}
+            {!loading && parties.length > 0 && visibleParties.length === 0 && (
+              <div className="empty">No matching parties</div>
+            )}
+            {loading && parties.length === 0 && <div className="empty">Loading parties…</div>}
+          </aside>
+        </div>
 
         <section className="eia-record-panel" aria-label="Party record">
           {selectedParty ? (
@@ -590,6 +839,17 @@ export default function App() {
                 </div>
               </div>
 
+              <div className="eia-context-panel" aria-label="Why this matters" data-testid="why-this-matters">
+                <h4>Why this matters</h4>
+                <p>
+                  Party is shared master data across both books: the same identity is referenced by
+                  direct policies and claims and by assumed contracts and claims. Book associations
+                  remain book-scoped — this record does not belong to either book. Status and sanctions
+                  are process gates: an inactive, blocked, restricted, or unsanctioned party can stop
+                  downstream processing until it is cleared.
+                </p>
+              </div>
+
               <nav className="eia-tabs" role="tablist" aria-label="Party sections">
                 {TABS.map((entry) => (
                   <button
@@ -608,6 +868,62 @@ export default function App() {
               </nav>
 
               {renderActiveTab(selectedParty)}
+
+              <section
+                className="eia-card"
+                aria-label="Related records"
+                data-testid="related-records"
+                style={{ marginTop: 14 }}
+              >
+                <h3>Related records</h3>
+                <p className="eia-muted" style={{ margin: '4px 0 0' }}>
+                  Direct-book records that reference this shared party.
+                </p>
+                {related.loading ? (
+                  <p className="eia-muted" style={{ margin: '8px 0 0' }}>Loading related records…</p>
+                ) : (
+                  <>
+                    {related.error && (
+                      <p className="eia-muted" style={{ margin: '8px 0 0' }}>{related.error}</p>
+                    )}
+                    <div className="eia-related-group-label">Direct claims</div>
+                    {related.claims.length === 0 ? (
+                      <p className="eia-muted" style={{ margin: '8px 0 0' }}>
+                        {related.error
+                          ? 'Claim links are unavailable right now.'
+                          : 'No direct claims reference this party.'}
+                      </p>
+                    ) : (
+                      <div className="eia-related-list">
+                        {related.claims.map((item, index) => {
+                          const href = relatedHref(item, 'direct-claims');
+                          return (
+                            <CrossLink
+                              key={item.id || item.href || `related-claim-${index}`}
+                              className="eia-related-record"
+                              href={href}
+                              title={item.secondary}
+                            >
+                              <b>{item.label}</b>
+                              {item.status ? <span>{item.status}</span> : null}
+                            </CrossLink>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <div className="eia-related-group-label">Policies</div>
+                    <div className="eia-related-list">
+                      <CrossLink
+                        className="eia-related-record"
+                        href="/policy"
+                        title="Search direct policies"
+                      >
+                        <b>Policy search</b>
+                      </CrossLink>
+                    </div>
+                  </>
+                )}
+              </section>
             </>
           ) : (
             <div className="eia-empty">

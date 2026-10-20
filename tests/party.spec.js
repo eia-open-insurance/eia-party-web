@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 
 const TENANT = '11111111-1111-7111-8111-111111111111';
 const API = '**/api/v1/parties**';
+const CLAIMS_SEARCH = '**/api/v1/claims/search**';
 
 function party(overrides = {}) {
   return {
@@ -29,11 +30,20 @@ async function json(route, status, body) {
   });
 }
 
+/** Keeps party selection independent from the direct-claims domain in every spec. */
+async function mockClaimsSearch(page, items = []) {
+  await page.route(CLAIMS_SEARCH, async (route) => {
+    const url = new URL(route.request().url());
+    await json(route, 200, { query: url.searchParams.get('q') || '', limit: 5, items });
+  });
+}
+
 test('renders the shared Party operational record layout and read-only sections', async ({ page }) => {
   const existing = party();
   const requests = [];
   let detailRequests = 0;
 
+  await mockClaimsSearch(page);
   await page.route(API, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -106,6 +116,7 @@ test('registers a party from the modal and preserves the tenant header', async (
   let createHeaders = null;
   let createBody = null;
 
+  await mockClaimsSearch(page);
   await page.route(API, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -180,6 +191,7 @@ test('registers a party from the modal and preserves the tenant header', async (
 test('shows problem details and keeps the registration modal open on failure', async ({ page }) => {
   const existing = party();
 
+  await mockClaimsSearch(page);
   await page.route(API, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
