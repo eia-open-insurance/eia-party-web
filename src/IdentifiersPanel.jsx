@@ -5,8 +5,11 @@ import { formatTimestamp } from './format.js';
 import {
   EMPTY_IDENTIFIER_FORM,
   IDENTIFIER_TYPES,
+  identifierChildEndpoint,
+  identifierDeleteConfirmation,
   identifierEndpoint,
   identifierErrorText,
+  identifierFormFromRow,
   identifierFromResponse,
   identifierRows,
   identifierPayload,
@@ -31,6 +34,9 @@ export default function IdentifiersPanel({ partyId }) {
   const [formError, setFormError] = useState('');
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState('');
+  const [deletingId, setDeletingId] = useState('');
+  const [actionError, setActionError] = useState('');
   const requestRef = useRef(0);
 
   async function loadIdentifiers() {
@@ -57,6 +63,9 @@ export default function IdentifiersPanel({ partyId }) {
     setFieldErrors({});
     setFormError('');
     setNotice('');
+    setEditingId('');
+    setDeletingId('');
+    setActionError('');
     loadIdentifiers();
     return () => {
       requestRef.current += 1;
@@ -73,39 +82,104 @@ export default function IdentifiersPanel({ partyId }) {
       return next;
     });
     setFormError('');
+    setActionError('');
+    setNotice('');
+  }
+
+  function startEdit(item) {
+    setEditingId(item.id);
+    setForm(identifierFormFromRow(item));
+    setFieldErrors({});
+    setFormError('');
+    setActionError('');
+    setNotice('');
+  }
+
+  function cancelEdit() {
+    setEditingId('');
+    setForm(EMPTY_IDENTIFIER_FORM);
+    setFieldErrors({});
+    setFormError('');
+    setActionError('');
     setNotice('');
   }
 
   async function submit(event) {
     event.preventDefault();
     if (saving) return;
+    const editing = Boolean(editingId);
     const errors = validateIdentifier(form);
     setFieldErrors(errors);
     setFormError('');
+    setActionError('');
     setNotice('');
     if (Object.keys(errors).length > 0) {
-      setFormError('Fix the highlighted fields before adding this identifier.');
+      setFormError(editing
+        ? 'Fix the highlighted fields before saving this identifier.'
+        : 'Fix the highlighted fields before adding this identifier.');
       return;
     }
 
     setSaving(true);
     try {
-      const body = await api(identifierEndpoint(partyId), {
-        method: 'POST',
-        body: identifierPayload(form)
-      });
-      const created = identifierFromResponse(body, form);
-      setItems((current) => [...current, created]);
-      setLoadError('');
-      setForm(EMPTY_IDENTIFIER_FORM);
-      setFieldErrors({});
-      setNotice('Identifier added.');
+      if (editing) {
+        await api(identifierChildEndpoint(partyId, editingId), {
+          method: 'PATCH',
+          body: identifierPayload(form)
+        });
+        setEditingId('');
+        setForm(EMPTY_IDENTIFIER_FORM);
+        setFieldErrors({});
+        setNotice('Identifier updated.');
+        await loadIdentifiers();
+      } else {
+        const body = await api(identifierEndpoint(partyId), {
+          method: 'POST',
+          body: identifierPayload(form)
+        });
+        const created = identifierFromResponse(body, form);
+        setItems((current) => [...current, created]);
+        setLoadError('');
+        setForm(EMPTY_IDENTIFIER_FORM);
+        setFieldErrors({});
+        setNotice('Identifier added.');
+      }
     } catch (cause) {
-      setFormError(identifierErrorText(cause));
+      setFormError(identifierErrorText(cause, editing ? 'update' : 'add'));
     } finally {
       setSaving(false);
     }
   }
+
+  async function remove(item) {
+    if (deletingId || saving) return;
+    if (!window.confirm(identifierDeleteConfirmation(item))) return;
+
+    setDeletingId(item.id);
+    setActionError('');
+    setNotice('');
+    try {
+      await api(identifierChildEndpoint(partyId, item.id), { method: 'DELETE' });
+      if (editingId === item.id) {
+        setEditingId('');
+        setForm(EMPTY_IDENTIFIER_FORM);
+        setFieldErrors({});
+        setFormError('');
+      }
+      setNotice('Identifier deleted.');
+      await loadIdentifiers();
+    } catch (cause) {
+      setActionError(identifierErrorText(cause, 'delete'));
+      if (cause?.status === 404 || cause?.status === 409) {
+        await loadIdentifiers();
+      }
+    } finally {
+      setDeletingId('');
+    }
+  }
+
+  const actionsDisabled = saving || Boolean(deletingId);
+  const editing = Boolean(editingId);
 
   const countLabel = loading
     ? '…'
@@ -160,6 +234,7 @@ export default function IdentifiersPanel({ partyId }) {
                 <th>Issuing authority</th>
                 <th>Effective date</th>
                 <th>Created</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -180,6 +255,29 @@ export default function IdentifiersPanel({ partyId }) {
                   <td data-testid="identifier-authority">{item.issuingAuthority || '—'}</td>
                   <td data-testid="identifier-effective">{item.effectiveDate || '—'}</td>
                   <td data-testid="identifier-created">{formatTimestamp(item.createdAt)}</td>
+                  <td data-testid="identifier-actions">
+                    <div className="eia-actions">
+                      <button
+                        type="button"
+                        className="eia-btn-ghost"
+                        onClick={() => startEdit(item)}
+                        disabled={actionsDisabled}
+                        data-testid="identifier-edit"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="eia-btn-ghost"
+                        onClick={() => remove(item)}
+                        disabled={actionsDisabled}
+                        aria-busy={deletingId === item.id ? 'true' : undefined}
+                        data-testid="identifier-delete"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -187,8 +285,31 @@ export default function IdentifiersPanel({ partyId }) {
         </div>
       )}
 
-      <section className="eia-card" aria-label="Add identifier" style={{ marginTop: 14 }}>
-        <h3 style={{ marginTop: 0 }}>Add identifier</h3>
+      {actionError && (
+        <p
+          className="eia-form-error"
+          role="alert"
+          data-testid="identifier-action-error"
+          style={{ margin: '10px 0 0' }}
+        >
+          {actionError}
+        </p>
+      )}
+
+      <section
+        className="eia-card"
+        aria-label={editing ? 'Edit identifier' : 'Add identifier'}
+        style={{ marginTop: 14 }}
+      >
+        <h3 style={{ marginTop: 0 }} data-testid="identifier-form-title">
+          {editing ? 'Edit identifier' : 'Add identifier'}
+        </h3>
+        {editing && (
+          <p className="eia-muted" style={{ margin: '4px 0 0' }} data-testid="identifier-edit-context">
+            Editing an existing identifier updates party master data used by every linked claim,
+            policy, and payment.
+          </p>
+        )}
         <form
           className="eia-form-grid"
           data-testid="identifier-form"
@@ -245,8 +366,25 @@ export default function IdentifiersPanel({ partyId }) {
           </Field>
 
           <div className="eia-actions span-3" style={{ justifyContent: 'flex-end' }}>
-            <button type="submit" disabled={saving}>
-              {saving ? 'Adding…' : 'Add identifier'}
+            {editing && (
+              <button
+                type="button"
+                className="eia-btn-secondary"
+                onClick={cancelEdit}
+                disabled={saving}
+                data-testid="identifier-cancel"
+              >
+                Cancel edit
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={saving || Boolean(deletingId)}
+              data-testid="identifier-submit"
+            >
+              {saving
+                ? (editing ? 'Saving…' : 'Adding…')
+                : (editing ? 'Save changes' : 'Add identifier')}
             </button>
           </div>
         </form>

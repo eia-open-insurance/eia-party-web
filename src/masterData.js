@@ -65,6 +65,16 @@ export function addressEndpoint(partyId) {
   return `/api/v1/parties/${encodeURIComponent(partyId)}/addresses`;
 }
 
+/** One identifier of the party aggregate: PATCH to edit it, DELETE to remove it. */
+export function identifierChildEndpoint(partyId, identifierId) {
+  return `${identifierEndpoint(partyId)}/${encodeURIComponent(identifierId)}`;
+}
+
+/** One address of the party aggregate: PATCH to edit it, DELETE to remove it. */
+export function addressChildEndpoint(partyId, addressId) {
+  return `${addressEndpoint(partyId)}/${encodeURIComponent(addressId)}`;
+}
+
 function collection(body) {
   if (Array.isArray(body)) return body;
   for (const key of ['items', 'content', 'data']) {
@@ -123,6 +133,37 @@ export function addressRows(body) {
       createdAt: text(row.createdAt || row.created)
     };
   });
+}
+
+/**
+ * Turns a listed identifier back into the add form's shape. Edit reuses the
+ * add form, so the operator sees the current master data before changing it.
+ */
+export function identifierFormFromRow(item) {
+  return {
+    identifierType: text(item?.identifierType),
+    value: text(item?.value),
+    issuingAuthority: text(item?.issuingAuthority),
+    effectiveDate: text(item?.effectiveDate)
+  };
+}
+
+/**
+ * Turns a listed address back into the add form's shape. The list projection
+ * joins the individual address lines, so the second line receives the
+ * remaining lines when more than two were recorded.
+ */
+export function addressFormFromRow(item) {
+  const lines = Array.isArray(item?.lines) ? item.lines.map(trimmed).filter(Boolean) : [];
+  return {
+    addressType: text(item?.addressType),
+    line1: lines[0] || '',
+    line2: lines.slice(1).join(', '),
+    city: text(item?.city),
+    state: text(item?.state),
+    postalCode: text(item?.postalCode),
+    country: text(item?.country)
+  };
 }
 
 export function validateIdentifier(form) {
@@ -211,22 +252,68 @@ export function addressFromResponse(body, form) {
 }
 
 /**
- * A 409 on a master-data create means the value is already present. The server
+ * A 409 on a master-data write means the value is already present. The server
  * message is kept and a recovery hint points at the existing list, so the
- * conflict stays inside the form instead of becoming a page-level error.
+ * conflict stays inside the section instead of becoming a page-level error.
+ * The action selects the fallback wording for add, update, and delete.
  */
-export function identifierErrorText(cause) {
-  const message = cause?.message || 'The identifier could not be added.';
+export function identifierErrorText(cause, action = 'add') {
+  const fallback = action === 'update'
+    ? 'The identifier could not be updated.'
+    : action === 'delete'
+      ? 'The identifier could not be deleted.'
+      : 'The identifier could not be added.';
+  const message = cause?.message || fallback;
   if (cause?.status === 409) {
+    if (action === 'delete') {
+      return `Identifier conflict — ${message} Refresh the list and review the existing identifiers.`;
+    }
     return `Duplicate identifier — ${message} Review the existing identifiers before retrying.`;
+  }
+  if (cause?.status === 404 && action !== 'add') {
+    return `This identifier no longer exists on the party. ${message} Refresh the list and try again.`;
+  }
+  if (cause?.status === 400 && action !== 'add') {
+    return `The identifier was rejected. ${message}`;
   }
   return message;
 }
 
-export function addressErrorText(cause) {
-  const message = cause?.message || 'The address could not be added.';
+export function addressErrorText(cause, action = 'add') {
+  const fallback = action === 'update'
+    ? 'The address could not be updated.'
+    : action === 'delete'
+      ? 'The address could not be deleted.'
+      : 'The address could not be added.';
+  const message = cause?.message || fallback;
   if (cause?.status === 409) {
+    if (action === 'delete') {
+      return `Address conflict — ${message} Refresh the list and review the existing addresses.`;
+    }
     return `Duplicate address — ${message} Review the existing addresses before retrying.`;
   }
+  if (cause?.status === 404 && action !== 'add') {
+    return `This address no longer exists on the party. ${message} Refresh the list and try again.`;
+  }
+  if (cause?.status === 400 && action !== 'add') {
+    return `The address was rejected. ${message}`;
+  }
   return message;
+}
+
+/**
+ * Confirmation for a destructive master-data change. Identifiers and addresses
+ * are shared facts, so the prompt names the record and the records that depend
+ * on it before the operator commits.
+ */
+export function identifierDeleteConfirmation(item) {
+  const label = [item?.identifierType, item?.value].filter(Boolean).join(' ') || 'this identifier';
+  return `Delete ${label}?\n\nIdentifiers are party master data referenced by claims, policies, and payments. Deleting this identifier removes it from the party, and linked records will no longer match it. This cannot be undone from this screen.`;
+}
+
+export function addressDeleteConfirmation(item) {
+  const label = [item?.addressType, item?.lines?.join(', '), item?.city]
+    .filter(Boolean)
+    .join(' — ') || 'this address';
+  return `Delete ${label}?\n\nAddresses are party master data used by policies, claims, and payments for mailing, rating, and remittance. Deleting this address removes it from the party, and linked records will no longer use it. This cannot be undone from this screen.`;
 }

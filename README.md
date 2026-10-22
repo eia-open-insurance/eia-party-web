@@ -50,21 +50,34 @@ are refreshed without changing the selected party.
 
 The Identifiers tab lists the party's identifiers with
 `GET /api/v1/parties/<id>/identifiers` (`X-EIA-Tenant`) and shows type, value,
-issuing authority, effective date, and created timestamp. The add form posts
-`{identifierType, value, issuingAuthority, effectiveDate}` to the same path.
+issuing authority, effective date, and created timestamp. Each row has **Edit**
+and **Delete** actions. The add form posts
+`{identifierType, identifierValue, issuingAuthority, effectiveDate}` to the
+same path; **Edit** opens that form prefilled and sends the same payload with
+`PATCH /api/v1/parties/<id>/identifiers/<childId>`.
 
 The Names & Addresses tab keeps the core name fields and lists addresses with
 `GET /api/v1/parties/<id>/addresses` and `X-EIA-Tenant`: address type, lines,
 city, state/region, postal code, and country. The add form posts
-`{addressType, line1, line2, city, state, postalCode, country}`.
+`{addressType, line1, line2, city, stateRegion, postalCode, country}`; **Edit**
+opens that form prefilled and sends the same payload with
+`PATCH /api/v1/parties/<id>/addresses/<childId>`.
 
-Both add forms validate required fields before posting, and the country is
-normalized to a 2- or 3-letter code. A duplicate (409), a validation problem, or
-an unavailable list stays inside its section: the party record, the other tabs,
-and the other section remain usable, and a conflict points the operator back at
-the existing entries. Identifiers and addresses are party aggregate master data
-referenced by claims, policies, and payments, so they are maintained on the
-party rather than re-keyed downstream.
+Successful adds, edits, and deletes refresh the section's list and show a
+notice. **Delete** first asks for confirmation: identifiers and addresses are
+party master data referenced by claims, policies, and payments, so the prompt
+names the record and explains that linked records will no longer match or use
+it. Confirming sends `DELETE /api/v1/parties/<id>/identifiers/<childId>` or
+`DELETE /api/v1/parties/<id>/addresses/<childId>`.
+
+Both forms validate required fields before posting, and the country is
+normalized to a 2- or 3-letter code. A 400 validation problem, a 404 (the child
+was removed concurrently), a duplicate (409), or an unavailable list stays
+inside its section: the party record, the other tabs, and the other section
+remain usable, and a conflict points the operator back at the existing entries.
+Identifiers and addresses are party aggregate master data referenced by claims,
+policies, and payments, so they are maintained on the party rather than
+re-keyed downstream.
 
 The party header's **Change status** action opens a dialog showing the current
 status and a target select with every `PartyStatus` except the current one

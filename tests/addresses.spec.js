@@ -6,6 +6,7 @@ const SECOND_ADDRESS_ID = '77777777-7777-7777-8777-777777777772';
 const NEW_ADDRESS_ID = '77777777-7777-7777-8777-777777777773';
 const PARTY_SEARCH = '**/api/v1/parties**';
 const ADDRESSES = '**/api/v1/parties/*/addresses';
+const ADDRESS_RECORD = '**/api/v1/parties/*/addresses/*';
 const CLAIMS_SEARCH = '**/api/v1/claims/search**';
 const POLICY_LOOKUP = '**/api/v1/policies**';
 const DOCUMENTS = '**/api/v1/documents**';
@@ -51,6 +52,69 @@ async function json(route, status, body) {
     status,
     contentType: 'application/json',
     body: JSON.stringify(body)
+  });
+}
+
+async function problem(route, status, body) {
+  await route.fulfill({
+    status,
+    contentType: 'application/problem+json',
+    body: JSON.stringify(body)
+  });
+}
+
+/**
+ * Serves the address collection and its child records, recording every write
+ * so a test can assert the exact PATCH/DELETE request and the refresh that
+ * follows it.
+ */
+async function mockAddressApi(page, state) {
+  state.gets = 0;
+  state.patches = [];
+  state.deletes = [];
+
+  await page.route(ADDRESSES, async (route) => {
+    if (route.request().method() === 'GET') {
+      state.gets += 1;
+      await json(route, 200, state.items);
+      return;
+    }
+    await route.fulfill({ status: 405, body: 'unexpected collection method' });
+  });
+
+  await page.route(ADDRESS_RECORD, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const id = decodeURIComponent(url.pathname.split('/').pop());
+    if (request.method() === 'PATCH') {
+      state.patches.push({
+        path: url.pathname,
+        id,
+        body: request.postDataJSON(),
+        headers: request.headers()
+      });
+      if (state.patchFailure) {
+        await problem(route, state.patchFailure.status, state.patchFailure.body);
+        return;
+      }
+      const existing = state.items.find((item) => item.id === id) || address();
+      const body = request.postDataJSON();
+      const updated = { ...existing, ...body, id };
+      state.items = state.items.map((item) => (item.id === id ? updated : item));
+      await json(route, 200, updated);
+      return;
+    }
+    if (request.method() === 'DELETE') {
+      state.deletes.push({ path: url.pathname, id, headers: request.headers() });
+      if (state.deleteFailure) {
+        await problem(route, state.deleteFailure.status, state.deleteFailure.body);
+        return;
+      }
+      state.items = state.items.filter((item) => item.id !== id);
+      await route.fulfill({ status: 204 });
+      return;
+    }
+    await route.fulfill({ status: 405, body: 'unexpected record method' });
   });
 }
 
@@ -373,4 +437,213 @@ test('contains a list failure and still allows an address to be added', async ({
   await expect(page.getByTestId('addresses-count')).toHaveText('1 address');
   await expect(page.getByTestId('address-notice')).toHaveText('Address added.');
   await expect(page.getByTestId('app-error')).toHaveCount(0);
+});
+
+test('edits an address from the prefilled form, patches it, and refreshes the list', async ({ page }) => {
+  const state = { items: [address()] };
+
+  await mockParty(page);
+  await mockSupportingLookups(page);
+  await mockAddressApi(page, state);
+
+  await openAddresses(page);
+  const row = page.getByTestId('address-row').first();
+  const form = page.getByTestId('address-form');
+
+  await row.getByTestId('address-edit').click();
+  await expect(page.getByTestId('address-form-title')).toHaveText('Edit address');
+  await expect(page.getByTestId('address-edit-context')).toContainText('party master data');
+  await expect(form.getByLabel('Address type')).toHaveValue('LEGAL');
+  await expect(form.getByLabel('Address line 1')).toHaveValue('100 Market Street');
+  await expect(form.getByLabel('Address line 2')).toHaveValue('Suite 400');
+  await expect(form.getByLabel('City')).toHaveValue('Columbus');
+  await expect(form.getByLabel('State / region')).toHaveValue('OH');
+  await expect(form.getByLabel('Postal code')).toHaveValue('43215');
+  await expect(form.getByLabel('Country')).toHaveValue('US');
+  await expect(page.getByTestId('address-cancel')).toBeVisible();
+
+  // Cancel restores the add form without sending anything.
+  await page.getByTestId('address-cancel').click();
+  await expect(page.getByTestId('address-form-title')).toHaveText('Add address');
+  await expect(form.getByLabel('Address line 1')).toHaveValue('');
+  expect(state.patches).toHaveLength(0);
+
+  await row.getByTestId('address-edit').click();
+  await form.getByLabel('City').fill('Dublin');
+  await form.getByLabel('Postal code').fill('43017');
+  await page.getByTestId('address-submit').click();
+
+  await expect.poll(() => state.patches.length).toBe(1);
+  expect(state.patches[0].path).toBe(
+    `/api/v1/parties/${PARTY_ID}/addresses/${address().id}`
+  );
+  expect(state.patches[0].body).toEqual({
+    addressType: 'LEGAL',
+    line1: '100 Market Street',
+    line2: 'Suite 400',
+    city: 'Dublin',
+    stateRegion: 'OH',
+    postalCode: '43017',
+    country: 'US'
+  });
+  expect(state.patches[0].headers['x-eia-tenant']).toBe(TENANT);
+  expect(state.patches[0].headers['content-type']).toContain('application/json');
+
+  await expect(page.getByTestId('address-notice')).toHaveText('Address updated.');
+  await expect(page.getByTestId('address-form-title')).toHaveText('Add address');
+  await expect(form.getByLabel('Address line 1')).toHaveValue('');
+  await expect(page.getByTestId('address-row')).toHaveCount(1);
+  const updated = page.getByTestId('address-row').first();
+  await expect(updated.getByTestId('address-city')).toHaveText('Dublin');
+  await expect(updated.getByTestId('address-postal')).toHaveText('43017');
+  await expect(updated.getByTestId('address-lines')).toContainText('100 Market Street');
+  await expect(updated.getByTestId('address-lines')).toContainText('Suite 400');
+  expect(state.gets).toBeGreaterThanOrEqual(2);
+  await expect(page.getByTestId('app-error')).toHaveCount(0);
+});
+
+test('contains a 400 and a 409 from an address edit inside the form', async ({ page }) => {
+  const state = { items: [address()] };
+
+  await mockParty(page);
+  await mockSupportingLookups(page);
+  await mockAddressApi(page, state);
+
+  await openAddresses(page);
+  await page.getByTestId('address-row').first().getByTestId('address-edit').click();
+  const form = page.getByTestId('address-form');
+  const formError = page.getByTestId('address-form-error');
+
+  state.patchFailure = {
+    status: 400,
+    body: {
+      type: 'https://errors.eia-open-insurance.example/party/invalid-address',
+      title: 'Invalid party address',
+      status: 400,
+      code: 'VALIDATION_FAILED',
+      detail: 'The country is not a valid ISO code.'
+    }
+  };
+  await page.getByTestId('address-submit').click();
+  await expect(formError).toContainText('The address was rejected.');
+  await expect(formError).toContainText('The country is not a valid ISO code.');
+  await expect(page.getByTestId('address-form-title')).toHaveText('Edit address');
+  await expect(page.getByTestId('address-row')).toHaveCount(1);
+  await expect(page.getByTestId('app-error')).toHaveCount(0);
+
+  state.patchFailure = {
+    status: 409,
+    body: {
+      type: 'https://errors.eia-open-insurance.example/party/duplicate-address',
+      title: 'Duplicate party address',
+      status: 409,
+      code: 'DUPLICATE_ADDRESS',
+      detail: 'An address with the same type and lines already exists for the party.'
+    }
+  };
+  await form.getByLabel('Address line 1').fill('PO Box 42');
+  await page.getByTestId('address-submit').click();
+
+  await expect.poll(() => state.patches.length).toBe(2);
+  await expect(formError).toContainText('Duplicate address');
+  await expect(formError).toContainText('An address with the same type and lines already exists');
+  await expect(formError).toContainText('Review the existing addresses before retrying.');
+  await expect(form.getByLabel('Address line 1')).toHaveValue('PO Box 42');
+  await expect(page.getByTestId('address-form-title')).toHaveText('Edit address');
+  await expect(page.getByTestId('addresses-count')).toHaveText('1 address');
+  await expect(page.getByTestId('address-row').getByTestId('address-city')).toHaveText('Columbus');
+  await expect(page.getByTestId('app-error')).toHaveCount(0);
+  await expect(page.getByTestId('party-status')).toHaveText('ACTIVE');
+});
+
+test('deletes an address only after a master-data confirmation and refreshes the list', async ({ page }) => {
+  const state = { items: [address()] };
+  const dialogs = [];
+  let acceptDialogs = false;
+
+  page.on('dialog', async (dialog) => {
+    dialogs.push(dialog.message());
+    if (acceptDialogs) {
+      await dialog.accept();
+    } else {
+      await dialog.dismiss();
+    }
+  });
+
+  await mockParty(page);
+  await mockSupportingLookups(page);
+  await mockAddressApi(page, state);
+
+  await openAddresses(page);
+  const row = page.getByTestId('address-row').first();
+
+  // Dismissing the confirmation sends nothing and keeps the address.
+  await row.getByTestId('address-delete').click();
+  await page.waitForTimeout(150);
+  expect(state.deletes).toHaveLength(0);
+  await expect(page.getByTestId('address-row')).toHaveCount(1);
+  await expect(page.getByTestId('address-notice')).toHaveCount(0);
+
+  expect(dialogs).toHaveLength(1);
+  expect(dialogs[0]).toContain('Delete LEGAL');
+  expect(dialogs[0]).toContain('100 Market Street');
+  expect(dialogs[0]).toContain('party master data');
+  expect(dialogs[0]).toContain('mailing, rating, and remittance');
+  expect(dialogs[0]).toContain('cannot be undone');
+
+  acceptDialogs = true;
+  await row.getByTestId('address-delete').click();
+
+  await expect.poll(() => state.deletes.length).toBe(1);
+  expect(state.deletes[0].path).toBe(
+    `/api/v1/parties/${PARTY_ID}/addresses/${address().id}`
+  );
+  expect(state.deletes[0].headers['x-eia-tenant']).toBe(TENANT);
+  expect(dialogs).toHaveLength(2);
+
+  await expect(page.getByTestId('address-notice')).toHaveText('Address deleted.');
+  await expect(page.getByTestId('address-row')).toHaveCount(0);
+  await expect(page.getByTestId('addresses-empty')).toHaveText(
+    'No addresses are recorded for this party yet.'
+  );
+  await expect(page.getByTestId('addresses-count')).toHaveText('0 addresses');
+  await expect(page.getByTestId('party-addresses').getByRole('table')).toHaveCount(0);
+  await expect(page.locator('#panel-names .eia-table-wrap')).toHaveCount(1);
+  expect(state.gets).toBeGreaterThanOrEqual(2);
+  await expect(page.getByTestId('app-error')).toHaveCount(0);
+});
+
+test('contains a 404 from an address delete inside the section', async ({ page }) => {
+  const state = { items: [address()] };
+
+  page.on('dialog', async (dialog) => {
+    await dialog.accept();
+  });
+
+  await mockParty(page);
+  await mockSupportingLookups(page);
+  await mockAddressApi(page, state);
+  state.deleteFailure = {
+    status: 404,
+    body: {
+      type: 'https://errors.eia-open-insurance.example/party/address-not-found',
+      title: 'Party address not found',
+      status: 404,
+      code: 'ADDRESS_NOT_FOUND',
+      detail: 'The address does not belong to this party.'
+    }
+  };
+
+  await openAddresses(page);
+  await page.getByTestId('address-row').first().getByTestId('address-delete').click();
+
+  const actionError = page.getByTestId('address-action-error');
+  await expect(actionError).toContainText('This address no longer exists on the party.');
+  await expect(actionError).toContainText('The address does not belong to this party.');
+  await expect(actionError).toContainText('Refresh the list and try again.');
+  await expect(page.getByTestId('address-row')).toHaveCount(1);
+  await expect(page.getByTestId('app-error')).toHaveCount(0);
+  await expect(page.getByTestId('party-status')).toHaveText('ACTIVE');
+  await expect(page.getByTestId('address-form')).toBeVisible();
+  expect(state.deletes).toHaveLength(1);
 });

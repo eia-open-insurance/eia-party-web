@@ -4,8 +4,11 @@ import { api } from './api.js';
 import {
   ADDRESS_TYPES,
   EMPTY_ADDRESS_FORM,
+  addressChildEndpoint,
+  addressDeleteConfirmation,
   addressEndpoint,
   addressErrorText,
+  addressFormFromRow,
   addressFromResponse,
   addressPayload,
   addressRows,
@@ -30,6 +33,9 @@ export default function AddressesPanel({ partyId }) {
   const [formError, setFormError] = useState('');
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState('');
+  const [deletingId, setDeletingId] = useState('');
+  const [actionError, setActionError] = useState('');
   const requestRef = useRef(0);
 
   async function loadAddresses() {
@@ -56,6 +62,9 @@ export default function AddressesPanel({ partyId }) {
     setFieldErrors({});
     setFormError('');
     setNotice('');
+    setEditingId('');
+    setDeletingId('');
+    setActionError('');
     loadAddresses();
     return () => {
       requestRef.current += 1;
@@ -72,39 +81,104 @@ export default function AddressesPanel({ partyId }) {
       return next;
     });
     setFormError('');
+    setActionError('');
+    setNotice('');
+  }
+
+  function startEdit(item) {
+    setEditingId(item.id);
+    setForm(addressFormFromRow(item));
+    setFieldErrors({});
+    setFormError('');
+    setActionError('');
+    setNotice('');
+  }
+
+  function cancelEdit() {
+    setEditingId('');
+    setForm(EMPTY_ADDRESS_FORM);
+    setFieldErrors({});
+    setFormError('');
+    setActionError('');
     setNotice('');
   }
 
   async function submit(event) {
     event.preventDefault();
     if (saving) return;
+    const editing = Boolean(editingId);
     const errors = validateAddress(form);
     setFieldErrors(errors);
     setFormError('');
+    setActionError('');
     setNotice('');
     if (Object.keys(errors).length > 0) {
-      setFormError('Fix the highlighted fields before adding this address.');
+      setFormError(editing
+        ? 'Fix the highlighted fields before saving this address.'
+        : 'Fix the highlighted fields before adding this address.');
       return;
     }
 
     setSaving(true);
     try {
-      const body = await api(addressEndpoint(partyId), {
-        method: 'POST',
-        body: addressPayload(form)
-      });
-      const created = addressFromResponse(body, form);
-      setItems((current) => [...current, created]);
-      setLoadError('');
-      setForm(EMPTY_ADDRESS_FORM);
-      setFieldErrors({});
-      setNotice('Address added.');
+      if (editing) {
+        await api(addressChildEndpoint(partyId, editingId), {
+          method: 'PATCH',
+          body: addressPayload(form)
+        });
+        setEditingId('');
+        setForm(EMPTY_ADDRESS_FORM);
+        setFieldErrors({});
+        setNotice('Address updated.');
+        await loadAddresses();
+      } else {
+        const body = await api(addressEndpoint(partyId), {
+          method: 'POST',
+          body: addressPayload(form)
+        });
+        const created = addressFromResponse(body, form);
+        setItems((current) => [...current, created]);
+        setLoadError('');
+        setForm(EMPTY_ADDRESS_FORM);
+        setFieldErrors({});
+        setNotice('Address added.');
+      }
     } catch (cause) {
-      setFormError(addressErrorText(cause));
+      setFormError(addressErrorText(cause, editing ? 'update' : 'add'));
     } finally {
       setSaving(false);
     }
   }
+
+  async function remove(item) {
+    if (deletingId || saving) return;
+    if (!window.confirm(addressDeleteConfirmation(item))) return;
+
+    setDeletingId(item.id);
+    setActionError('');
+    setNotice('');
+    try {
+      await api(addressChildEndpoint(partyId, item.id), { method: 'DELETE' });
+      if (editingId === item.id) {
+        setEditingId('');
+        setForm(EMPTY_ADDRESS_FORM);
+        setFieldErrors({});
+        setFormError('');
+      }
+      setNotice('Address deleted.');
+      await loadAddresses();
+    } catch (cause) {
+      setActionError(addressErrorText(cause, 'delete'));
+      if (cause?.status === 404 || cause?.status === 409) {
+        await loadAddresses();
+      }
+    } finally {
+      setDeletingId('');
+    }
+  }
+
+  const actionsDisabled = saving || Boolean(deletingId);
+  const editing = Boolean(editingId);
 
   const countLabel = loading
     ? '…'
@@ -155,6 +229,7 @@ export default function AddressesPanel({ partyId }) {
                 <th>State / region</th>
                 <th>Postal code</th>
                 <th>Country</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -178,6 +253,29 @@ export default function AddressesPanel({ partyId }) {
                     {item.postalCode || '—'}
                   </td>
                   <td data-testid="address-country">{item.country || '—'}</td>
+                  <td data-testid="address-actions">
+                    <div className="eia-actions">
+                      <button
+                        type="button"
+                        className="eia-btn-ghost"
+                        onClick={() => startEdit(item)}
+                        disabled={actionsDisabled}
+                        data-testid="address-edit"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="eia-btn-ghost"
+                        onClick={() => remove(item)}
+                        disabled={actionsDisabled}
+                        aria-busy={deletingId === item.id ? 'true' : undefined}
+                        data-testid="address-delete"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -185,8 +283,31 @@ export default function AddressesPanel({ partyId }) {
         </div>
       )}
 
-      <section className="eia-card" aria-label="Add address" style={{ marginTop: 14 }}>
-        <h3 style={{ marginTop: 0 }}>Add address</h3>
+      {actionError && (
+        <p
+          className="eia-form-error"
+          role="alert"
+          data-testid="address-action-error"
+          style={{ margin: '10px 0 0' }}
+        >
+          {actionError}
+        </p>
+      )}
+
+      <section
+        className="eia-card"
+        aria-label={editing ? 'Edit address' : 'Add address'}
+        style={{ marginTop: 14 }}
+      >
+        <h3 style={{ marginTop: 0 }} data-testid="address-form-title">
+          {editing ? 'Edit address' : 'Add address'}
+        </h3>
+        {editing && (
+          <p className="eia-muted" style={{ margin: '4px 0 0' }} data-testid="address-edit-context">
+            Editing an existing address updates party master data used by every linked policy,
+            claim, and payment.
+          </p>
+        )}
         <form
           className="eia-form-grid"
           data-testid="address-form"
@@ -280,8 +401,25 @@ export default function AddressesPanel({ partyId }) {
           </Field>
 
           <div className="eia-actions span-2" style={{ justifyContent: 'flex-end' }}>
-            <button type="submit" disabled={saving}>
-              {saving ? 'Adding…' : 'Add address'}
+            {editing && (
+              <button
+                type="button"
+                className="eia-btn-secondary"
+                onClick={cancelEdit}
+                disabled={saving}
+                data-testid="address-cancel"
+              >
+                Cancel edit
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={saving || Boolean(deletingId)}
+              data-testid="address-submit"
+            >
+              {saving
+                ? (editing ? 'Saving…' : 'Adding…')
+                : (editing ? 'Save changes' : 'Add address')}
             </button>
           </div>
         </form>

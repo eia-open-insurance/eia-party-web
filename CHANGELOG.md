@@ -26,13 +26,25 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
 - Party identifiers. The Identifiers tab reads
   `GET /api/v1/parties/<id>/identifiers` and lists type, value, issuing
   authority, effective date, and created timestamp. The add form validates
-  required fields and posts `identifierType`, `value`, `issuingAuthority`, and
-  `effectiveDate` to the same path.
+  required fields and posts `identifierType`, `identifierValue`,
+  `issuingAuthority`, and `effectiveDate` to the same path.
 - Party addresses. The Names & Addresses tab reads
   `GET /api/v1/parties/<id>/addresses` and lists type, lines, city,
   state/region, postal code, and country. The add form validates required
   fields, normalizes the country code, and posts `addressType`, `line1`,
-  `line2`, `city`, `state`, `postalCode`, and `country`.
+  `line2`, `city`, `stateRegion`, `postalCode`, and `country`.
+- Identifier and address maintenance. Each list row has **Edit** and **Delete**
+  actions. Edit reuses the add form prefilled with the row and sends
+  `PATCH /api/v1/parties/<id>/identifiers/<childId>` or
+  `PATCH /api/v1/parties/<id>/addresses/<childId>` with the same payload as the
+  create. Delete asks for confirmation that names the record and explains the
+  master-data impact on claims, policies, and payments, then sends the matching
+  `DELETE`. Both refresh the section list and show a notice on success, and a
+  400, 404, or 409 stays inline in the form or section.
+- Playwright coverage for identifier and address edit/delete: prefilled edit
+  forms, PATCH and DELETE paths with the tenant header, list refreshes and
+  notices, confirmation dismissal and acceptance, and contained 400, 404, and
+  409 failures.
 - List failures, validation problems, and duplicate (409) responses stay inside
   the identifiers or addresses section. The party record and companion
   sections remain usable, and conflicts point at the existing entries.
