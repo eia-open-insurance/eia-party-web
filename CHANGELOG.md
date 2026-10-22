@@ -36,9 +36,18 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
 - List failures, validation problems, and duplicate (409) responses stay inside
   the identifiers or addresses section. The party record and companion
   sections remain usable, and conflicts point at the existing entries.
+- Party lifecycle status changes. The header action opens a dialog with the
+  current status and every other `PartyStatus` as a target, plus an optional
+  reason of up to 500 characters. It sends
+  `PATCH /api/v1/parties/<id>/status` with `{status, reason?}` and the detail
+  read's `If-Match`, refreshes the party, reloads the activity timeline, and
+  shows a notice. A 409/412 conflict keeps the dialog open with the refreshed
+  current status. The dialog explains that `INACTIVE`, `BLOCKED`, and
+  `RESTRICTED` can stop new claims, policies, and payments while existing
+  records are unchanged.
 
 ### Changed
 
-- Replaced the identifier and address availability caveats with the
-  master-data sections and context. The status-transitions limitation is still
-  documented because the Party API does not expose lifecycle transitions.
+- Replaced the identifier, address, and status-transition availability caveats
+  with the implemented master-data and lifecycle sections and their downstream
+  context.

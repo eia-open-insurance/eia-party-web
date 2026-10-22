@@ -17,8 +17,8 @@ Party federated remote: screens, widgets, record tabs, and transaction compositi
 
 The remote renders the shared Party operational record: a filterable register,
 deep links via `?record=<id>` and `?new=1`, party registration, Overview /
-Identifiers / Names & Addresses / Activity tabs, and cross-links to direct-book
-records.
+Identifiers / Names & Addresses / Activity tabs, lifecycle status changes, and
+cross-links to direct-book records.
 
 On selection, the Overview tab reads the first five direct policies for the
 party with
@@ -53,8 +53,22 @@ an unavailable list stays inside its section: the party record, the other tabs,
 and the other section remain usable, and a conflict points the operator back at
 the existing entries. Identifiers and addresses are party aggregate master data
 referenced by claims, policies, and payments, so they are maintained on the
-party rather than re-keyed downstream. Status transitions are still not exposed
-by the Party API; the overview states that limitation.
+party rather than re-keyed downstream.
+
+The party header's **Change status** action opens a dialog showing the current
+status and a target select with every `PartyStatus` except the current one
+(`PROSPECT`, `ACTIVE`, `INACTIVE`, `DECEASED`, `DISSOLVED`, `MERGED`,
+`RESTRICTED`, `BLOCKED`). The operator may add a reason of up to 500 characters.
+Submitting sends `PATCH /api/v1/parties/<id>/status` with
+`{status, reason?}` and the `If-Match` value from the detail read (or the
+quoted aggregate version), refreshes the party from the response, reloads the
+event-derived activity timeline, and shows a notice. A 409/412 race keeps the
+dialog open with the problem and the refreshed current status.
+
+Status is a process gate: `INACTIVE`, `BLOCKED`, and `RESTRICTED` can stop new
+claims, policies, and payments, while existing records keep their own facts and
+history. The dialog and the Overview operations note both state the downstream
+effect.
 
 ## Responsibilities
 

@@ -24,10 +24,16 @@ export function problemMessage(body, fallback) {
   return details.length > 0 ? `${summary} (${details.join('; ')})` : summary;
 }
 
-export async function api(path, options = {}) {
+/**
+ * Performs one request and keeps the response metadata. Versioned writes use
+ * the ETag from the preceding read (or its quoted aggregate version) as
+ * `If-Match`, so a stale record cannot silently win a race.
+ */
+export async function apiRequest(path, options = {}) {
   const headers = { 'X-EIA-Tenant': TENANT };
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   if (options.book) headers['X-EIA-Book'] = options.book;
+  if (options.etag) headers['If-Match'] = options.etag;
   const response = await fetch(path, {
     method: options.method || 'GET',
     headers,
@@ -41,5 +47,10 @@ export async function api(path, options = {}) {
     error.body = body;
     throw error;
   }
+  return { body, response, etag: response.headers.get('ETag') };
+}
+
+export async function api(path, options = {}) {
+  const { body } = await apiRequest(path, options);
   return body;
 }

@@ -500,6 +500,24 @@ main [role="status"] {
   padding: 9px 12px;
 }
 
+.eia-status-current {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: var(--eia-soft);
+  border: 1px solid var(--eia-line);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.eia-status-warning {
+  margin: 8px 0 0 !important;
+  color: var(--eia-red) !important;
+  font-weight: 600;
+}
+
 .eia-table-wrap { background: #fff; border: 1px solid var(--eia-line); border-radius: 8px; overflow: auto; }
 .eia-table-wrap table { border: 0 !important; border-radius: 0 !important; }
 .eia-table { width: 100%; }

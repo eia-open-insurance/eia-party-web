@@ -119,7 +119,11 @@ test('renders the shared Party operational record layout and master-data section
 
   const operations = page.getByTestId('available-operations');
   await expect(operations).toContainText('maintaining identifiers and addresses');
-  await expect(operations).toContainText('Status transitions are not exposed by the Party API yet');
+  await expect(operations).toContainText('changing lifecycle status');
+  await expect(operations).toContainText(
+    'INACTIVE, BLOCKED, or RESTRICTED can stop new claims, policies, and payments'
+  );
+  await expect(operations).not.toContainText('Status transitions are not exposed');
   await expect(operations).not.toContainText('identifiers, and addresses are not exposed');
 
   const requestsBeforeRefresh = detailRequests;

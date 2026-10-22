@@ -4,9 +4,21 @@ import ActivityTimeline from './ActivityTimeline.jsx';
 import AddressesPanel from './AddressesPanel.jsx';
 import Field from './Field.jsx';
 import IdentifiersPanel from './IdentifiersPanel.jsx';
-import { api, TENANT } from './api.js';
+import { api, apiRequest, TENANT } from './api.js';
 import { activityEndpoint, eventItems, sortActivityEvents } from './events.js';
 import { formatTimestamp } from './format.js';
+import {
+  STATUS_EFFECT_TEXT,
+  defaultStatusTarget,
+  isRestrictiveStatus,
+  statusChangeErrorText,
+  statusDescription,
+  statusEtag,
+  statusEndpoint,
+  statusPayload,
+  statusTargets,
+  validateStatusChange
+} from './status.js';
 import { navigate, recordHref } from './navigation.js';
 const RELATED_LIMIT = 5;
 const POLICY_LIMIT = 5;
@@ -164,6 +176,14 @@ export default function App() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [registerOpen, setRegisterOpen] = useState(false);
   const [registering, setRegistering] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [statusParty, setStatusParty] = useState(null);
+  const [statusTarget, setStatusTarget] = useState('');
+  const [statusReason, setStatusReason] = useState('');
+  const [statusIfMatch, setStatusIfMatch] = useState('');
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [statusError, setStatusError] = useState('');
+  const [detailEtag, setDetailEtag] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [queueFilter, setQueueFilter] = useState('');
@@ -206,10 +226,17 @@ export default function App() {
     detailRequest.current = requestId;
     if (!options.silent) setDetailLoading(true);
     try {
-      const record = await api(`/api/v1/parties/${encodeURIComponent(partyId)}`);
-      if (requestId === detailRequest.current) setDetail(record);
+      const { body: record, etag } = await apiRequest(
+        `/api/v1/parties/${encodeURIComponent(partyId)}`
+      );
+      if (requestId === detailRequest.current) {
+        setDetail(record);
+        setDetailEtag(statusEtag(record, etag));
+      }
+      return record;
     } catch (e) {
       if (requestId === detailRequest.current) setError(e.message);
+      return null;
     } finally {
       if (requestId === detailRequest.current) setDetailLoading(false);
     }
@@ -468,6 +495,18 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [registerOpen, registering, selectedId]);
 
+  useEffect(() => {
+    if (!statusOpen) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape' && !statusSaving) closeStatusDialog();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+    // closeStatusDialog intentionally stays outside the dependency list: it
+    // only reads the saving gate and clears dialog state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusOpen, statusSaving]);
+
   function selectParty(partyId) {
     if (!partyId) return;
     writeUrl({ record: partyId });
@@ -506,6 +545,123 @@ export default function App() {
       setError(e.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  /**
+   * Status changes are version guarded. The dialog snapshots the party it was
+   * opened for so a background refresh cannot redirect the write, and the
+   * If-Match value comes from the detail read (or the quoted version).
+   */
+  function openStatusDialog() {
+    if (!selectedParty?.id) return;
+    setStatusParty(selectedParty);
+    setStatusTarget(defaultStatusTarget(selectedParty.status));
+    setStatusReason('');
+    setStatusIfMatch(statusEtag(
+      selectedParty,
+      detail?.id === selectedParty.id ? detailEtag : ''
+    ));
+    setStatusError('');
+    setError('');
+    setNotice('');
+    setStatusOpen(true);
+  }
+
+  function closeStatusDialog() {
+    if (statusSaving) return;
+    setStatusOpen(false);
+    setStatusParty(null);
+    setStatusTarget('');
+    setStatusReason('');
+    setStatusIfMatch('');
+    setStatusError('');
+  }
+
+  /**
+   * A 409/412 means another operator moved the party first. Re-read it so the
+   * dialog can show the new current status and retry with the new If-Match.
+   */
+  async function rereadStatusParty(partyId) {
+    try {
+      const { body, etag } = await apiRequest(
+        `/api/v1/parties/${encodeURIComponent(partyId)}`
+      );
+      if (!body?.id) return null;
+      setStatusParty((current) => ({ ...(current || {}), ...body }));
+      setStatusTarget(defaultStatusTarget(body.status));
+      setStatusIfMatch(statusEtag(body, etag));
+      setParties((current) => current.map(
+        (entry) => (entry.id === partyId ? { ...entry, ...body } : entry)
+      ));
+      if (selectedId === partyId) {
+        setDetail(body);
+        setDetailEtag(statusEtag(body, etag));
+      }
+      return body;
+    } catch {
+      return null;
+    }
+  }
+
+  async function submitStatusChange(event) {
+    event.preventDefault();
+    if (!statusParty?.id || statusSaving) return;
+
+    const fromStatus = statusParty.status;
+    const validation = validateStatusChange(fromStatus, statusTarget, statusReason);
+    if (validation) {
+      setStatusError(validation);
+      return;
+    }
+    if (!statusIfMatch) {
+      setStatusError('The party version is unavailable. Refresh the record and try again.');
+      return;
+    }
+
+    setStatusSaving(true);
+    setStatusError('');
+    setError('');
+    try {
+      const { body: updated, etag } = await apiRequest(statusEndpoint(statusParty.id), {
+        method: 'PATCH',
+        body: statusPayload(statusTarget, statusReason),
+        etag: statusIfMatch
+      });
+      const changed = updated && typeof updated === 'object' ? updated : {};
+      const merged = {
+        ...statusParty,
+        ...changed,
+        status: changed.status || statusTarget
+      };
+
+      setParties((current) => current.map(
+        (entry) => (entry.id === statusParty.id ? { ...entry, ...merged } : entry)
+      ));
+      if (selectedId === statusParty.id) {
+        setDetail(merged);
+        setDetailEtag(statusEtag(merged, etag));
+      }
+      setNotice(
+        `${merged.partyNumber || statusParty.partyNumber || 'Party'} status changed from `
+        + `${fromStatus || '—'} to ${merged.status}.`
+      );
+      setStatusOpen(false);
+      setStatusParty(null);
+      setStatusTarget('');
+      setStatusReason('');
+      setStatusIfMatch('');
+
+      if (selectedId === statusParty.id) await loadActivity(statusParty.id);
+    } catch (cause) {
+      if ([409, 412, 428].includes(Number(cause?.status))) {
+        const fresh = await rereadStatusParty(statusParty.id);
+        setStatusError(statusChangeErrorText(cause, fresh?.status || ''));
+      } else {
+        setStatusError(statusChangeErrorText(cause));
+      }
+    } finally {
+      setStatusSaving(false);
     }
   }
 
@@ -816,10 +972,11 @@ export default function App() {
           <h3>Available operations</h3>
           <p style={{ margin: '8px 0 0' }}>
             This release supports listing and reading party records, registering new parties,
-            maintaining identifiers and addresses, and reading the event-derived activity timeline.
-            Identifiers and addresses are party master data referenced by policies, claims, and
-            payments. Status transitions are not exposed by the Party API yet, so lifecycle status
-            remains read-only.
+            maintaining identifiers and addresses, reading the event-derived activity timeline, and
+            changing lifecycle status. Identifiers and addresses are party master data referenced by
+            policies, claims, and payments. A status change is a version-guarded write: INACTIVE,
+            BLOCKED, or RESTRICTED can stop new claims, policies, and payments, while existing
+            records are unchanged.
           </p>
         </section>
       </section>
@@ -947,6 +1104,15 @@ export default function App() {
                   </p>
                 </div>
                 <div className="eia-actions">
+                  <button
+                    type="button"
+                    className="eia-btn-secondary"
+                    data-testid="change-status"
+                    aria-haspopup="dialog"
+                    onClick={openStatusDialog}
+                  >
+                    Change status
+                  </button>
                   <button
                     type="button"
                     className="eia-btn-ghost"
@@ -1089,6 +1255,128 @@ export default function App() {
           )}
         </section>
       </div>
+
+      {statusOpen && statusParty && (
+        <div
+          style={OVERLAY_STYLE}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !statusSaving) closeStatusDialog();
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="status-title"
+            className="eia-card"
+            style={DIALOG_STYLE}
+            data-testid="status-dialog"
+          >
+            <div className="eia-record-title">
+              <div>
+                <h2 id="status-title" style={{ margin: 0 }}>Change status</h2>
+                <p className="eia-record-subtitle">
+                  Moves this shared party to another lifecycle status. The write uses the version
+                  read from the record, so a concurrent change is reported instead of overwritten.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="eia-btn-ghost"
+                onClick={closeStatusDialog}
+                disabled={statusSaving}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="eia-status-current" data-testid="status-current">
+              <span className="eia-muted">Current status</span>
+              <span
+                className={`eia-pill ${statusTone(statusParty.status)}`}
+                data-testid="status-current-pill"
+              >
+                {statusParty.status || '—'}
+              </span>
+              <span className="eia-mono" data-testid="status-party-number">
+                {statusParty.partyNumber || ''}
+              </span>
+            </div>
+
+            <form className="eia-form-grid" onSubmit={submitStatusChange} style={{ marginTop: 16 }}>
+              <Field
+                label="New status"
+                className="span-3"
+                hint={statusDescription(statusTarget)}
+              >
+                <select
+                  id="status-target"
+                  data-testid="status-target"
+                  value={statusTarget}
+                  onChange={(event) => {
+                    setStatusTarget(event.target.value);
+                    setStatusError('');
+                  }}
+                  autoFocus
+                  required
+                >
+                  {statusTargets(statusParty.status).map((status) => (
+                    <option key={status} value={status}>{status}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field
+                label="Reason (optional)"
+                className="span-3"
+                hint={`${statusReason.length} / 500 characters · recorded with the transition`}
+              >
+                <textarea
+                  id="status-reason"
+                  data-testid="status-reason"
+                  value={statusReason}
+                  onChange={(event) => {
+                    setStatusReason(event.target.value);
+                    setStatusError('');
+                  }}
+                  placeholder="Why is this status changing?"
+                  maxLength={500}
+                  rows={3}
+                />
+              </Field>
+
+              <div className="eia-actions span-3" style={{ justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  className="eia-btn-secondary"
+                  onClick={closeStatusDialog}
+                  disabled={statusSaving}
+                >
+                  Cancel
+                </button>
+                <button type="submit" data-testid="status-submit" disabled={statusSaving}>
+                  {statusSaving ? 'Changing…' : 'Change status'}
+                </button>
+              </div>
+            </form>
+
+            <div className="eia-context-panel" data-testid="status-downstream">
+              <h4>Downstream effect</h4>
+              <p>{STATUS_EFFECT_TEXT}</p>
+              {isRestrictiveStatus(statusTarget) && (
+                <p className="eia-status-warning" data-testid="status-warning">
+                  Changing to {statusTarget} can stop new claims, policies, and payments. Existing
+                  records are unchanged.
+                </p>
+              )}
+            </div>
+
+            {statusError && (
+              <p role="alert" data-testid="status-error" style={{ margin: '10px 0 0' }}>
+                {statusError}
+              </p>
+            )}
+          </section>
+        </div>
+      )}
 
       {registerOpen && (
         <div
