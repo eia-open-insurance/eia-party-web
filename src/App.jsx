@@ -4,9 +4,16 @@ import ActivityTimeline from './ActivityTimeline.jsx';
 import AddressesPanel from './AddressesPanel.jsx';
 import Field from './Field.jsx';
 import IdentifiersPanel from './IdentifiersPanel.jsx';
+import NotificationsPanel from './NotificationsPanel.jsx';
 import { api, apiRequest, TENANT } from './api.js';
 import { activityEndpoint, eventItems, sortActivityEvents } from './events.js';
 import { formatTimestamp } from './format.js';
+import {
+  emptyPartyNotificationsState,
+  partyNotificationCount,
+  partyNotifications,
+  partyNotificationsEndpoint
+} from './notifications.js';
 import {
   STATUS_EFFECT_TEXT,
   defaultStatusTarget,
@@ -191,11 +198,13 @@ export default function App() {
   const [policies, setPolicies] = useState({ items: [], loading: false, error: '' });
   const [documents, setDocuments] = useState({ items: [], loading: false, error: '' });
   const [activity, setActivity] = useState({ items: [], loading: false, error: '' });
+  const [notifications, setNotifications] = useState(emptyPartyNotificationsState);
   const detailRequest = useRef(0);
   const relatedRequest = useRef(0);
   const policyRequest = useRef(0);
   const documentRequest = useRef(0);
   const activityRequest = useRef(0);
+  const notificationRequest = useRef(0);
   const partiesRef = useRef([]);
   const applyingUrlRef = useRef(false);
   const registerOpenRef = useRef(false);
@@ -303,6 +312,7 @@ export default function App() {
     loadRelated(partyId);
     loadPolicies(partyId);
     loadDocuments(partyId);
+    loadNotifications(partyId);
     loadActivity(partyId);
   }
 
@@ -366,15 +376,51 @@ export default function App() {
     }
   }
 
+  /**
+   * Notifications are delivery artifacts owned by the Notifications vertical.
+   * The Overview card reads them as read-only context; a failed lookup is
+   * contained in the card and never blocks the party record or its tabs.
+   */
+  async function loadNotifications(partyId) {
+    const requestId = notificationRequest.current + 1;
+    notificationRequest.current = requestId;
+    if (!partyId) {
+      setNotifications(emptyPartyNotificationsState());
+      return;
+    }
+    setNotifications({ items: [], count: 0, loading: true, error: '' });
+    try {
+      const body = await api(partyNotificationsEndpoint(partyId));
+      if (requestId !== notificationRequest.current) return;
+      const items = partyNotifications(body, partyId);
+      setNotifications({
+        items,
+        count: partyNotificationCount(body, items),
+        loading: false,
+        error: ''
+      });
+    } catch (e) {
+      if (requestId !== notificationRequest.current) return;
+      setNotifications({
+        items: [],
+        count: 0,
+        loading: false,
+        error: e.message || 'Notifications are temporarily unavailable.'
+      });
+    }
+  }
+
   function clearRelated() {
     relatedRequest.current += 1;
     policyRequest.current += 1;
     documentRequest.current += 1;
     activityRequest.current += 1;
+    notificationRequest.current += 1;
     setRelated({ claims: [], loading: false, error: '' });
     setPolicies({ items: [], loading: false, error: '' });
     setDocuments({ items: [], loading: false, error: '' });
     setActivity({ items: [], loading: false, error: '' });
+    setNotifications(emptyPartyNotificationsState());
   }
 
   /**
@@ -479,6 +525,7 @@ export default function App() {
       policyRequest.current += 1;
       documentRequest.current += 1;
       activityRequest.current += 1;
+      notificationRequest.current += 1;
     };
   }, []);
 
@@ -962,6 +1009,14 @@ export default function App() {
             </div>
           )}
         </section>
+
+        <NotificationsPanel
+          partyId={party.id}
+          items={notifications.items}
+          count={notifications.count}
+          loading={notifications.loading}
+          error={notifications.error}
+        />
 
         <section
           className="eia-card"

@@ -45,6 +45,21 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   current status. The dialog explains that `INACTIVE`, `BLOCKED`, and
   `RESTRICTED` can stop new claims, policies, and payments while existing
   records are unchanged.
+- Related-notifications Overview card. Selecting a party fetches
+  `GET /api/v1/notifications?sourceType=PARTY&sourceId=<id>` with the tenant
+  header and shows the total count plus the three newest notifications (number,
+  subject, delivery status, and creation time, newest first). Each number opens
+  `/notifications?record=<id>`, and **View all notifications** opens the
+  Notifications queue filtered to this party
+  (`/notifications?sourceType=PARTY&sourceId=<id>`). Rows that explicitly name
+  another source are dropped, an `{ items }` envelope is accepted, and loading,
+  empty, and failure states stay inside the card so a slow or unavailable
+  Notifications service never blocks the party record or its tabs.
+- Playwright coverage for related notifications: the source query and tenant
+  header, the count and newest-three preview, record and filtered-queue links,
+  refetching on selection, the envelope and single-notification case, the empty
+  state, a contained 503 that leaves status and the identifiers/addresses tabs
+  usable, and rendering the party while the lookup is in flight.
 
 ### Changed
 

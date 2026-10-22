@@ -28,6 +28,17 @@ product, and status, and opens `/policy?record=<id>`. The lookup is independent
 of the party detail read: an empty result shows an inline empty state and a
 failure shows an inline unavailable message, so the party record stays usable.
 
+A **Related notifications** card lists the Notifications messages whose
+`sourceType`/`sourceId` point at the selected party from
+`GET /api/v1/notifications?sourceType=PARTY&sourceId=<id>`: the total count and
+the three newest notifications with their number, subject, delivery status, and
+creation time (newest first). Each notification number opens its record at
+`/notifications?record=<id>`, and **View all notifications** opens the
+Notifications queue filtered to this party
+(`/notifications?sourceType=PARTY&sourceId=<id>`). An empty state and a
+delivery-artifact note are local to the card; a slow or failing Notifications
+API renders inside it and never blocks the party record or its tabs.
+
 On selection, the Activity tab reads the party's aggregate event stream with
 `GET /api/v1/events/aggregate/<partyId>?limit=50` and `X-EIA-Tenant`. The card
 renders newest-first events with timestamp, a readable event type
