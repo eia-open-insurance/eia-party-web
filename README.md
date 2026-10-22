@@ -37,6 +37,25 @@ facts derived from the platform event stream; the party record remains the
 source of truth. Loading, empty, and failure states stay inside the card and
 are refreshed without changing the selected party.
 
+The Identifiers tab lists the party's identifiers with
+`GET /api/v1/parties/<id>/identifiers` (`X-EIA-Tenant`) and shows type, value,
+issuing authority, effective date, and created timestamp. The add form posts
+`{identifierType, value, issuingAuthority, effectiveDate}` to the same path.
+
+The Names & Addresses tab keeps the core name fields and lists addresses with
+`GET /api/v1/parties/<id>/addresses` and `X-EIA-Tenant`: address type, lines,
+city, state/region, postal code, and country. The add form posts
+`{addressType, line1, line2, city, state, postalCode, country}`.
+
+Both add forms validate required fields before posting, and the country is
+normalized to a 2- or 3-letter code. A duplicate (409), a validation problem, or
+an unavailable list stays inside its section: the party record, the other tabs,
+and the other section remain usable, and a conflict points the operator back at
+the existing entries. Identifiers and addresses are party aggregate master data
+referenced by claims, policies, and payments, so they are maintained on the
+party rather than re-keyed downstream. Status transitions are still not exposed
+by the Party API; the overview states that limitation.
+
 ## Responsibilities
 
 - Keep this repository focused on one deployable component or one platform concern.

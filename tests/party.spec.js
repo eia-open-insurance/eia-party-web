@@ -53,7 +53,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('renders the shared Party operational record layout and read-only sections', async ({ page }) => {
+test('renders the shared Party operational record layout and master-data sections', async ({ page }) => {
   const existing = party();
   const requests = [];
   let detailRequests = 0;
@@ -72,6 +72,14 @@ test('renders the shared Party operational record layout and read-only sections'
     if (request.method() === 'GET' && url.pathname === `/api/v1/parties/${existing.id}`) {
       detailRequests += 1;
       await json(route, 200, existing);
+      return;
+    }
+    if (request.method() === 'GET' && url.pathname === `/api/v1/parties/${existing.id}/identifiers`) {
+      await json(route, 200, []);
+      return;
+    }
+    if (request.method() === 'GET' && url.pathname === `/api/v1/parties/${existing.id}/addresses`) {
+      await json(route, 200, []);
       return;
     }
     await route.fulfill({ status: 404, body: `unexpected route ${request.method()} ${url.pathname}` });
@@ -105,19 +113,42 @@ test('renders the shared Party operational record layout and read-only sections'
   await expect(page.getByTestId('overview-party-number')).toHaveText('PTY-000000001');
   await expect(page.getByText('Acme Manufacturing Holdings, Inc.')).toBeVisible();
 
+  const context = page.getByTestId('why-this-matters');
+  await expect(context).toContainText('identifiers and addresses');
+  await expect(context).toContainText('claims, policies, and payments');
+
+  const operations = page.getByTestId('available-operations');
+  await expect(operations).toContainText('maintaining identifiers and addresses');
+  await expect(operations).toContainText('Status transitions are not exposed by the Party API yet');
+  await expect(operations).not.toContainText('identifiers, and addresses are not exposed');
+
   const requestsBeforeRefresh = detailRequests;
   await page.getByRole('button', { name: 'Refresh record' }).click();
   await expect.poll(() => detailRequests).toBeGreaterThan(requestsBeforeRefresh);
 
   await page.getByRole('tab', { name: 'Identifiers' }).click();
-  await expect(page.locator('#panel-identifiers .eia-table-wrap')).toBeVisible();
-  await expect(page.getByText('No identifier endpoint is available in this release.')).toBeVisible();
-  await expect(page.locator('#panel-identifiers .eia-badge.warn')).toHaveText('Not available');
+  await expect(page.getByTestId('party-identifiers')).toBeVisible();
+  await expect(page.getByTestId('identifiers-count')).toHaveText('0 identifiers');
+  await expect(page.getByTestId('identifiers-empty')).toContainText(
+    'No identifiers are recorded for this party yet.'
+  );
+  await expect(page.getByTestId('identifiers-context')).toContainText(
+    /claims, policies, and payments/i
+  );
+  await expect(page.getByText('No identifier endpoint is available in this release.')).toHaveCount(0);
+  await expect(page.getByText('Not available')).toHaveCount(0);
 
   await page.getByRole('tab', { name: 'Names & Addresses' }).click();
-  await expect(page.locator('#panel-names .eia-table-wrap')).toHaveCount(2);
+  await expect(page.locator('#panel-names .eia-table-wrap')).toHaveCount(1);
   await expect(page.getByRole('cell', { name: 'Acme Manufacturing Holdings, Inc.' })).toBeVisible();
-  await expect(page.getByText('No address endpoint is available in this release.')).toBeVisible();
+  await expect(page.getByTestId('addresses-count')).toHaveText('0 addresses');
+  await expect(page.getByTestId('addresses-empty')).toContainText(
+    'No addresses are recorded for this party yet.'
+  );
+  await expect(page.getByTestId('addresses-context')).toContainText(
+    /policies, claims, and payments/i
+  );
+  await expect(page.getByText('No address endpoint is available in this release.')).toHaveCount(0);
 
   await page.getByRole('tab', { name: 'Activity' }).click();
   await expect(page.getByTestId('party-activity')).toBeVisible();

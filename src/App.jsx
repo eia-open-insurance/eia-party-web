@@ -1,10 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './ui.css';
 import ActivityTimeline from './ActivityTimeline.jsx';
+import AddressesPanel from './AddressesPanel.jsx';
+import Field from './Field.jsx';
+import IdentifiersPanel from './IdentifiersPanel.jsx';
+import { api, TENANT } from './api.js';
 import { activityEndpoint, eventItems, sortActivityEvents } from './events.js';
+import { formatTimestamp } from './format.js';
 import { navigate, recordHref } from './navigation.js';
-
-const TENANT = '11111111-1111-7111-8111-111111111111';
 const RELATED_LIMIT = 5;
 const POLICY_LIMIT = 5;
 const QUEUE_FILTER_PLACEHOLDER = 'Filter parties by number, name, type, or status…';
@@ -78,34 +81,6 @@ function documentStatusTone(status) {
   return 'blue';
 }
 
-function formatTimestamp(value) {
-  if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
-}
-
-function problemMessage(body, fallback) {
-  if (!body || typeof body !== 'object') return fallback;
-  const summary = body.message || body.detail || body.title || fallback;
-  const details = [];
-  if (body.details && typeof body.details === 'object' && !Array.isArray(body.details)) {
-    for (const [field, message] of Object.entries(body.details)) {
-      details.push(`${field}: ${message}`);
-    }
-  }
-  if (Array.isArray(body.errors)) {
-    for (const error of body.errors) {
-      details.push(`${error.field || 'request'}: ${error.message || error.code || 'is invalid'}`);
-    }
-  }
-  return details.length > 0 ? `${summary} (${details.join('; ')})` : summary;
-}
-
-async function readJson(response) {
-  return response.json().catch(() => null);
-}
-
 function readUrlState() {
   if (typeof window === 'undefined') return { record: '', create: false };
   const params = new URLSearchParams(window.location.search);
@@ -175,33 +150,8 @@ function CrossLink({ href, className, title, children }) {
   );
 }
 
-async function api(path, options = {}) {
-  const headers = { 'X-EIA-Tenant': TENANT };
-  if (options.body !== undefined) headers['Content-Type'] = 'application/json';
-  if (options.book) headers['X-EIA-Book'] = options.book;
-  const response = await fetch(path, {
-    method: options.method || 'GET',
-    headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body)
-  });
-  const body = await readJson(response);
-  if (!response.ok) {
-    throw new Error(problemMessage(body, `Request failed: ${response.status}`));
-  }
-  return body;
-}
-
 function updateField(setter, field, value) {
   setter((current) => ({ ...current, [field]: value }));
-}
-
-function Field({ label, children, className = '' }) {
-  return (
-    <label className={`eia-field ${className}`.trim()}>
-      <span>{label}</span>
-      {children}
-    </label>
-  );
 }
 
 export default function App() {
@@ -625,37 +575,7 @@ export default function App() {
 
   function renderActiveTab(party) {
     if (activeTab === 'identifiers') {
-      return (
-        <section id="panel-identifiers" role="tabpanel" aria-labelledby="tab-identifiers">
-          <div className="eia-section-title" style={{ marginTop: 0 }}>
-            <h2>Identifiers</h2>
-            <span className="eia-badge warn">Not available</span>
-          </div>
-          <p className="eia-muted" style={{ marginTop: 0 }}>
-            The Party API exposes core party fields only in this release. Tax identifiers, registration
-            numbers, and LEIs cannot be read or maintained here yet.
-          </p>
-          <div className="eia-table-wrap">
-            <table className="eia-table">
-              <thead>
-                <tr>
-                  <th>Identifier</th>
-                  <th>Value</th>
-                  <th>Issued by</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td className="eia-muted" colSpan={4}>
-                    No identifier endpoint is available in this release.
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-      );
+      return <IdentifiersPanel key={party.id} partyId={party.id} />;
     }
 
     if (activeTab === 'names') {
@@ -689,32 +609,7 @@ export default function App() {
             </table>
           </div>
 
-          <div className="eia-section-title">
-            <h2>Addresses</h2>
-            <span className="eia-badge warn">Not available</span>
-          </div>
-          <p className="eia-muted" style={{ marginTop: 0 }}>
-            Address records are not exposed by the Party API in this release.
-          </p>
-          <div className="eia-table-wrap">
-            <table className="eia-table">
-              <thead>
-                <tr>
-                  <th>Address type</th>
-                  <th>Line 1</th>
-                  <th>City</th>
-                  <th>Country</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td className="eia-muted" colSpan={4}>
-                    No address endpoint is available in this release.
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <AddressesPanel key={party.id} partyId={party.id} />
         </section>
       );
     }
@@ -912,13 +807,19 @@ export default function App() {
           )}
         </section>
 
-        <section className="eia-card" aria-label="API coverage" style={{ marginTop: 14 }}>
+        <section
+          className="eia-card"
+          aria-label="API coverage"
+          data-testid="available-operations"
+          style={{ marginTop: 14 }}
+        >
           <h3>Available operations</h3>
           <p style={{ margin: '8px 0 0' }}>
-            This release supports listing and reading party records, registering new parties, and
-            reading the event-derived activity timeline. Status transitions, identifiers, and
-            addresses are not exposed by the Party API yet, so those sections are marked unavailable
-            instead of showing derived or placeholder data.
+            This release supports listing and reading party records, registering new parties,
+            maintaining identifiers and addresses, and reading the event-derived activity timeline.
+            Identifiers and addresses are party master data referenced by policies, claims, and
+            payments. Status transitions are not exposed by the Party API yet, so lifecycle status
+            remains read-only.
           </p>
         </section>
       </section>
@@ -932,9 +833,9 @@ export default function App() {
           <div className="eyebrow">Party · Shared master data</div>
           <h1>Party</h1>
           <p className="subtitle">
-            Shared party master data for the direct and assumed books: identity, classification,
-            sanctions screening, and confidentiality. Policies, claims, and contracts keep their own
-            book scope.
+            Shared party master data for the direct and assumed books: identity, identifiers,
+            addresses, classification, sanctions screening, and confidentiality. Policies, claims, and
+            payments reference the same party record; each keeps its own book scope.
           </p>
         </div>
         <div className="eia-actions">
@@ -948,8 +849,10 @@ export default function App() {
         </div>
       </header>
 
-      {notice && <p role="status" style={{ margin: '0 0 12px' }}>{notice}</p>}
-      {error && !registerOpen && <p role="alert" style={{ margin: '0 0 12px' }}>{error}</p>}
+      {notice && <p role="status" data-testid="app-notice" style={{ margin: '0 0 12px' }}>{notice}</p>}
+      {error && !registerOpen && (
+        <p role="alert" data-testid="app-error" style={{ margin: '0 0 12px' }}>{error}</p>
+      )}
 
       <div className="eia-record-layout">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
@@ -1085,10 +988,12 @@ export default function App() {
               <div className="eia-context-panel" aria-label="Why this matters" data-testid="why-this-matters">
                 <h4>Why this matters</h4>
                 <p>
-                  Party is shared master data across both books: the same identity is referenced by
-                  direct policies and claims and by assumed contracts and claims. Book associations
-                  remain book-scoped — this record does not belong to either book. Status and sanctions
-                  are process gates: an inactive, blocked, restricted, or unsanctioned party can stop
+                  Party is shared master data across both books: the same identity — including its
+                  identifiers and addresses — is referenced by claims, policies, and payments. Those
+                  records copy or reference the master values, so keeping identifiers and addresses
+                  current here prevents re-keying and mismatches downstream. Book associations remain
+                  book-scoped — this record does not belong to either book. Status and sanctions are
+                  process gates: an inactive, blocked, restricted, or unsanctioned party can stop
                   downstream processing until it is cleared.
                 </p>
               </div>

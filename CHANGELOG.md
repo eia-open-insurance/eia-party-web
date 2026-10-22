@@ -23,3 +23,22 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   empty, and failure states are card-local, and the timeline refetches for
   each selected party or on demand. Events are append-only; the party record
   remains the source of truth.
+- Party identifiers. The Identifiers tab reads
+  `GET /api/v1/parties/<id>/identifiers` and lists type, value, issuing
+  authority, effective date, and created timestamp. The add form validates
+  required fields and posts `identifierType`, `value`, `issuingAuthority`, and
+  `effectiveDate` to the same path.
+- Party addresses. The Names & Addresses tab reads
+  `GET /api/v1/parties/<id>/addresses` and lists type, lines, city,
+  state/region, postal code, and country. The add form validates required
+  fields, normalizes the country code, and posts `addressType`, `line1`,
+  `line2`, `city`, `state`, `postalCode`, and `country`.
+- List failures, validation problems, and duplicate (409) responses stay inside
+  the identifiers or addresses section. The party record and companion
+  sections remain usable, and conflicts point at the existing entries.
+
+### Changed
+
+- Replaced the identifier and address availability caveats with the
+  master-data sections and context. The status-transitions limitation is still
+  documented because the Party API does not expose lifecycle transitions.

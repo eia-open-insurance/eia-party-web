@@ -486,8 +486,19 @@ main [role="status"] {
 .eia-form-grid .span-2 { grid-column: span 2; }
 .eia-form-grid .span-3 { grid-column: 1 / -1; }
 .eia-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.eia-field > label { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .eia-field label { font-size: 11px; color: var(--eia-muted); font-weight: 600; }
 .eia-field input, .eia-field select, .eia-field textarea { width: 100%; }
+.eia-field-hint { font-size: 10px; color: var(--eia-muted); font-weight: 400; }
+.eia-field-error { font-size: 11px; color: var(--eia-red); font-weight: 600; line-height: 1.4; }
+.eia-form-notice {
+  background: #e6f5ec;
+  border: 1px solid #a9d8bd;
+  border-radius: 4px;
+  color: var(--eia-green);
+  font-size: 12px;
+  padding: 9px 12px;
+}
 
 .eia-table-wrap { background: #fff; border: 1px solid var(--eia-line); border-radius: 8px; overflow: auto; }
 .eia-table-wrap table { border: 0 !important; border-radius: 0 !important; }
