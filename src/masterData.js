@@ -154,8 +154,8 @@ export function validateAddress(form) {
   if (trimmed(form.postalCode).length > 20) errors.postalCode = 'Use 20 characters or fewer.';
   const country = trimmed(form.country);
   if (!country) errors.country = 'Enter the country code.';
-  else if (!/^[A-Za-z]{2,3}$/.test(country)) {
-    errors.country = 'Enter a 2- or 3-letter country code (for example USA).';
+  else if (!/^[A-Za-z]{2}$/.test(country)) {
+    errors.country = 'Enter a 2-letter ISO country code (for example US).';
   }
   return errors;
 }
@@ -163,7 +163,7 @@ export function validateAddress(form) {
 export function identifierPayload(form) {
   return {
     identifierType: form.identifierType,
-    value: trimmed(form.value),
+    identifierValue: trimmed(form.value),
     issuingAuthority: trimmed(form.issuingAuthority) || null,
     effectiveDate: form.effectiveDate || null
   };
@@ -175,7 +175,7 @@ export function addressPayload(form) {
     line1: trimmed(form.line1),
     line2: trimmed(form.line2) || null,
     city: trimmed(form.city),
-    state: trimmed(form.state) || null,
+    stateRegion: trimmed(form.state) || null,
     postalCode: trimmed(form.postalCode) || null,
     country: trimmed(form.country).toUpperCase()
   };

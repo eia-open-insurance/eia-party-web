@@ -162,6 +162,7 @@ test('adds an identifier with a trimmed payload and the tenant header', async ({
       create = { body: request.postDataJSON(), headers: request.headers() };
       const created = identifier({
         ...create.body,
+        value: create.body.identifierValue,
         id: NEW_IDENTIFIER_ID,
         createdAt: '2026-10-21T10:00:00Z'
       });
@@ -194,7 +195,7 @@ test('adds an identifier with a trimmed payload and the tenant header', async ({
   expect(posts).toBe(1);
   expect(create.body).toEqual({
     identifierType: 'TIN',
-    value: '12-3456789',
+    identifierValue: '12-3456789',
     issuingAuthority: 'Internal Revenue Service',
     effectiveDate: '2026-01-01'
   });

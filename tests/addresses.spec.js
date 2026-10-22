@@ -38,9 +38,9 @@ function address(overrides = {}) {
     line1: '100 Market Street',
     line2: 'Suite 400',
     city: 'Columbus',
-    state: 'OH',
+    stateRegion: 'OH',
     postalCode: '43215',
-    country: 'USA',
+    country: 'US',
     createdAt: '2026-10-20T09:30:00Z',
     ...overrides
   };
@@ -133,7 +133,7 @@ test('lists addresses with type, lines, city, state, postal code, and country', 
   await expect(first.getByTestId('address-city')).toHaveText('Columbus');
   await expect(first.getByTestId('address-state')).toHaveText('OH');
   await expect(first.getByTestId('address-postal')).toHaveText('43215');
-  await expect(first.getByTestId('address-country')).toHaveText('USA');
+  await expect(first.getByTestId('address-country')).toHaveText('US');
 
   const second = rendered.nth(1);
   await expect(second.getByTestId('address-type')).toHaveText('MAILING');
@@ -189,7 +189,7 @@ test('adds an address with a normalized payload and the tenant header', async ({
   await form.getByLabel('City').fill('  Columbus  ');
   await form.getByLabel('State / region').fill('OH');
   await form.getByLabel('Postal code').fill('43215');
-  await form.getByLabel('Country').fill('usa');
+  await form.getByLabel('Country').fill('us');
   await form.getByRole('button', { name: 'Add address' }).click();
 
   await expect(page.getByTestId('addresses-count')).toHaveText('1 address');
@@ -202,7 +202,7 @@ test('adds an address with a normalized payload and the tenant header', async ({
   await expect(row.getByTestId('address-city')).toHaveText('Columbus');
   await expect(row.getByTestId('address-state')).toHaveText('OH');
   await expect(row.getByTestId('address-postal')).toHaveText('43215');
-  await expect(row.getByTestId('address-country')).toHaveText('USA');
+  await expect(row.getByTestId('address-country')).toHaveText('US');
 
   expect(posts).toBe(1);
   expect(create.body).toEqual({
@@ -210,9 +210,9 @@ test('adds an address with a normalized payload and the tenant header', async ({
     line1: '100 Market Street',
     line2: 'Floor 3',
     city: 'Columbus',
-    state: 'OH',
+    stateRegion: 'OH',
     postalCode: '43215',
-    country: 'USA'
+    country: 'US'
   });
   expect(create.headers['x-eia-tenant']).toBe(TENANT);
   expect(create.headers['content-type']).toContain('application/json');
@@ -249,7 +249,7 @@ test('validates the add form without posting an invalid address', async ({ page 
 
   await form.getByLabel('Country').fill('U');
   await form.getByRole('button', { name: 'Add address' }).click();
-  await expect(form.getByText('Enter a 2- or 3-letter country code (for example USA).')).toBeVisible();
+  await expect(form.getByText('Enter a 2-letter ISO country code (for example US).')).toBeVisible();
 
   expect(posts).toBe(0);
   await expect(page.getByTestId('address-row')).toHaveCount(0);
@@ -284,7 +284,7 @@ test('contains a duplicate 409 inside the form and keeps the record usable', asy
   await form.getByLabel('Address type').selectOption('LEGAL');
   await form.getByLabel('Address line 1').fill('100 Market Street');
   await form.getByLabel('City').fill('Columbus');
-  await form.getByLabel('Country').fill('USA');
+  await form.getByLabel('Country').fill('US');
   await form.getByRole('button', { name: 'Add address' }).click();
 
   const formError = page.getByTestId('address-form-error');
@@ -365,7 +365,7 @@ test('contains a list failure and still allows an address to be added', async ({
   await form.getByLabel('Address type').selectOption('LEGAL');
   await form.getByLabel('Address line 1').fill('100 Market Street');
   await form.getByLabel('City').fill('Columbus');
-  await form.getByLabel('Country').fill('USA');
+  await form.getByLabel('Country').fill('US');
   await form.getByRole('button', { name: 'Add address' }).click();
 
   expect(posts).toBe(1);
