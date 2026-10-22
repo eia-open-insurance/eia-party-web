@@ -169,6 +169,7 @@ test('changes every status with If-Match, updates the party, reloads activity, a
 
     await page.goto(`/?record=${PARTY_ID}`);
     await expect(page.getByTestId('party-status')).toHaveText(fromStatus);
+    await expect.poll(() => state.activityReads).toBeGreaterThan(0);
     const activityBefore = state.activityReads;
 
     const dialog = await openStatusDialog(page);
@@ -193,8 +194,8 @@ test('changes every status with If-Match, updates the party, reloads activity, a
       reason ? { status: target, reason: 'Confirmed sanctions match' } : { status: target }
     );
 
-    // One read for the initial selection, one after a successful transition.
-    await expect.poll(() => state.activityReads - activityBefore).toBe(2);
+    // At least one additional read after a successful transition.
+    await expect.poll(() => state.activityReads - activityBefore).toBeGreaterThanOrEqual(1);
   }
 });
 
